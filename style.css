@@ -1,0 +1,285 @@
+/* ==========================================
+   1. RESET & BASE STYLES
+   ========================================== */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Roboto', sans-serif;
+}
+
+body {
+    background-color: #dadbd4; /* WhatsApp web classic background color */
+    background-image: linear-gradient(180deg, #00a884 0%, #00a884 127px, #dadbd4 127px, #dadbd4 100%);
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Helper Class for Buttons */
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+/* ==========================================
+   2. AUTHENTICATION SCREEN
+   ========================================== */
+.auth-box {
+    background: #ffffff;
+    width: 100%;
+    max-width: 400px;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+}
+
+.auth-header {
+    text-align: center;
+    margin-bottom: 25px;
+}
+
+.auth-header h2 {
+    color: #00a884;
+    margin-bottom: 5px;
+}
+
+.auth-header p {
+    color: #667781;
+    font-size: 14px;
+}
+
+.input-group {
+    margin-bottom: 20px;
+}
+
+.input-group label {
+    display: block;
+    font-size: 12px;
+    color: #00a884;
+    font-weight: 500;
+    margin-bottom: 5px;
+}
+
+.input-group input {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #e9edef;
+    border-radius: 5px;
+    background-color: #f0f2f5;
+    outline: none;
+    font-size: 15px;
+}
+
+.input-group input:focus {
+    border-color: #00a884;
+    background-color: #fff;
+}
+
+.auth-buttons {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.btn-primary {
+    background-color: #00a884;
+    color: white;
+    flex: 1;
+}
+
+.btn-primary:hover {
+    background-color: #008f72;
+}
+
+.btn-secondary {
+    background-color: #f0f2f5;
+    color: #54656f;
+    flex: 1;
+}
+
+.btn-secondary:hover {
+    background-color: #e1e3e6;
+}
+
+/* ==========================================
+   3. MAIN CHAT SCREEN
+   ========================================== */
+.chat-box {
+    background: #efeae2; /* Traditional WhatsApp chat wallpaper tint */
+    width: 100%;
+    max-width: 900px;
+    height: 90vh;
+    border-radius: 10px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Chat Header */
+.chat-header {
+    background-color: #f0f2f5;
+    padding: 10px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #e9edef;
+}
+
+.user-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.avatar {
+    width: 40px;
+    height: 40px;
+    background-color: #d9dbd9;
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 20px;
+}
+
+.user-info h3 {
+    font-size: 16px;
+    color: #111b21;
+    font-weight: 500;
+}
+
+.user-info .status {
+    font-size: 12px;
+    color: #667781;
+}
+
+.btn-logout {
+    background: none;
+    border: 1px solid #d1d7db;
+    padding: 6px 12px;
+    border-radius: 4px;
+    color: #ea0038;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.btn-logout:hover {
+    background-color: rgba(234, 0, 56, 0.05);
+}
+
+/* Chat Messages Window */
+.chat-messages {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* System Alerts */
+.system-message {
+    align-self: center;
+    background-color: #ffeecd;
+    color: #54656f;
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 5px;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.1);
+}
+
+/* Message Bubbles Structure */
+.message {
+    max-width: 65%;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 14.5px;
+    line-height: 1.4;
+    position: relative;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.1);
+    word-wrap: break-word;
+    display: flex;
+    flex-direction: column;
+}
+
+.message .sender-meta {
+    font-size: 11px;
+    font-weight: bold;
+    color: #128c7e;
+    margin-bottom: 3px;
+}
+
+.message .timestamp {
+    font-size: 10px;
+    color: #667781;
+    align-self: flex-end;
+    margin-top: 4px;
+}
+
+/* Sent Messages (Right Side) */
+.message.sent {
+    align-self: flex-end;
+    background-color: #d9fdd3; /* WhatsApp Sent Bubble Green */
+    color: #111b21;
+}
+
+/* Received Messages (Left Side) */
+.message.received {
+    align-self: flex-start;
+    background-color: #ffffff; /* WhatsApp Received Bubble White */
+    color: #111b21;
+}
+
+/* ==========================================
+   4. CHAT INPUT FOOTER
+   ========================================== */
+.chat-input-area {
+    background-color: #f0f2f5;
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.chat-input-area input {
+    flex: 1;
+    padding: 12px;
+    border: none;
+    border-radius: 8px;
+    background-color: #ffffff;
+    outline: none;
+    font-size: 15px;
+    color: #111b21;
+}
+
+.btn-send {
+    background: none;
+    border: none;
+    color: #54656f;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: color 0.2s;
+}
+
+.btn-send:hover {
+    color: #00a884; /* Turns WhatsApp Green on Hover */
+}
+
+/* Custom Scrollbar for Chat Window */
+.chat-messages::-webkit-scrollbar {
+    width: 6px;
+}
+.chat-messages::-webkit-scrollbar-thumb {
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 5px;
+}

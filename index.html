@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Clone</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <div id="auth-container" class="auth-box">
+        <div class="auth-header">
+            <h2>WhatsApp Clone</h2>
+            <p>Login or Sign up to start chatting</p>
+        </div>
+        <div class="auth-form">
+            <div class="input-group">
+                <label for="email">Email Address</label>
+                <input type="email" id="email" placeholder="enter your email..." required>
+            </div>
+            <div class="input-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" placeholder="enter your password..." required>
+            </div>
+            <div class="auth-buttons">
+                <button id="login-btn" class="btn btn-primary">Log In</button>
+                <button id="signup-btn" class="btn btn-secondary">Sign Up</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="chat-container" class="chat-box" style="display: none;">
+        
+        <div class="chat-header">
+            <div class="user-info">
+                <div class="avatar">💬</div>
+                <div>
+                    <h3 id="current-chat-title">Global Chat Room</h3>
+                    <span id="user-display-email" class="status">Logged in as: ...</span>
+                </div>
+            </div>
+            <button id="logout-btn" class="btn-logout">Logout</button>
+        </div>
+
+        <div id="chat-window" class="chat-messages">
+            <div class="system-message">Loading messages...</div>
+        </div>
+
+        <div class="chat-input-area">
+            <input type="text" id="message-input" placeholder="Type a message..." autocomplete="off">
+            <button id="send-btn" class="btn-send">
+                <svg viewBox="0 0 24 24" width="24" height="24">
+                    <path fill="currentColor" d="M1.101 21.757L23.8 12.028 1.101 2.3l.011 7.912 13.623 1.816-13.623 1.817-.011 7.912z"></path>
+                </svg>
+            </button>
+        </div>
+
+    </div>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>
