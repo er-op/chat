@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KSM</title>
+    <title>KSM - Chat</title>
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
 </head>
@@ -12,7 +12,7 @@
     <div id="auth-container" class="auth-box">
         <div class="auth-header">
             <h2>KSM</h2>
-            <p>Login to start smiling</p>
+            <p>Login or Sign Up to start smiling</p>
         </div>
         <div class="auth-form">
             <div class="input-group">
@@ -25,44 +25,54 @@
             </div>
             <div class="auth-buttons">
                 <button id="login-btn" class="btn btn-primary">Log In</button>
-                <button type="button" disabled id="signup-btn" class="btn btn-secondary">Sign Up</button>
+                <button type="button" id="signup-btn" class="btn btn-secondary">Sign Up</button>
             </div>
         </div>
     </div>
 
-    <div id="chat-container" class="chat-box" style="display: none;">
+    <div id="chat-container" class="chat-dashboard" style="display: none;">
         
-        <div class="chat-header">
-            <div class="user-info">
-                <div class="avatar">💬</div>
-                <div>
-                    <h3 id="current-chat-title">Global Chat Room</h3>
-                    <span id="user-display-email" class="status">Logged in as: ...</span>
-                </div>
+        <div class="sidebar-users">
+            <div class="sidebar-header">
+                <h3>People</h3>
             </div>
-            <button id="logout-btn" class="btn-logout">Logout</button>
+            <div id="users-list" class="users-bubble-container">
+                </div>
         </div>
 
-        <div id="chat-window" class="chat-messages">
-            <div class="system-message">Loading messages...</div>
-        </div>
+        <div class="chat-main-frame">
+            <div class="chat-header">
+                <div class="user-info">
+                    <div id="active-user-avatar" class="avatar">💬</div>
+                    <div>
+                        <h3 id="current-chat-title">Select a person to chat</h3>
+                        <span id="user-display-email" class="status">Logged in as: ...</span>
+                    </div>
+                </div>
+                <button id="logout-btn" class="btn-logout">Logout</button>
+            </div>
 
-        <div class="chat-input-area">
-            <input type="file" id="file-input" accept="image/*,video/*" style="display: none;">
-            
-            <button id="attach-btn" class="btn-attach" title="Attach photo or video">
-                <svg viewBox="0 0 24 24" width="24" height="24">
-                    <path fill="currentColor" d="M19 10.5V6c0-1.1-.9-2-2-2H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-4.5l5 4.5v-11l-5 4.5zM14 13h-3v3H9v-3H6v-2h3V8h2v3h3v2z"></path>
-                </svg>
-            </button>
+            <div id="chat-window" class="chat-messages">
+                <div class="system-message">Select an active friend bubble from the left side to load history, bro!</div>
+            </div>
 
-            <input type="text" id="message-input" placeholder="Type a message..." autocomplete="off">
-            
-            <button id="send-btn" class="btn-send">
-                <svg viewBox="0 0 24 24" width="24" height="24">
-                    <path fill="currentColor" d="M1.101 21.757L23.8 12.028 1.101 2.3l.011 7.912 13.623 1.816-13.623 1.817-.011 7.912z"></path>
-                </svg>
-            </button>
+            <div class="chat-input-area">
+                <input type="file" id="file-input" accept="image/*" style="display: none;">
+                
+                <button id="attach-btn" class="btn-attach" title="Attach Photo">
+                    <svg viewBox="0 0 24 24" width="24" height="24">
+                        <path fill="currentColor" d="M19 5v14H5V5h14m0-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-4.86 8.86l-3 3.87L9 13.14 6 17h12l-3.86-5.14z"></path>
+                    </svg>
+                </button>
+
+                <input type="text" id="message-input" placeholder="Type a message..." autocomplete="off" disabled>
+                
+                <button id="send-btn" class="btn-send" disabled>
+                    <svg viewBox="0 0 24 24" width="24" height="24">
+                        <path fill="currentColor" d="M1.101 21.757L23.8 12.028 1.101 2.3l.011 7.912 13.623 1.816-13.623 1.817-.011 7.912z"></path>
+                    </svg>
+                </button>
+            </div>
         </div>
 
     </div>

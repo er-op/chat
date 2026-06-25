@@ -1,5 +1,5 @@
 // ============================================================================
-// 1. FIREBASE SDK IMPORTS (Updated with Storage)
+// 1. FIREBASE SDK IMPORTS
 // ============================================================================
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { 
@@ -18,18 +18,12 @@ import {
     onSnapshot, 
     serverTimestamp,
     doc,
-    deleteDoc 
+    deleteDoc,
+    setDoc 
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { 
-    getStorage, 
-    ref, 
-    uploadBytes, 
-    getDownloadURL 
-} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 // ============================================================================
 // 2. YOUR FIREBASE CONFIGURATION
-// Keep your actual keys pasted here exactly as you had them before!
 // ============================================================================
 const firebaseConfig = {
   apiKey: "AIzaSyB1uzmDbEQMFHvD8J9EkUDyj5Hnc36ImG4",
@@ -41,12 +35,10 @@ const firebaseConfig = {
   measurementId: "G-60EH4K3X4Z"
 };
 
-
 // Initialize Firebase Services
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const storage = getStorage(app); 
 
 // ============================================================================
 // 3. DOM ELEMENT REFERENCES
@@ -56,7 +48,7 @@ const chatContainer = document.getElementById('chat-container');
 const emailInput = document.getElementById('email');
 const passwordInput = document.getElementById('password');
 const loginBtn = document.getElementById('login-btn');
-const signupBtn = document.getElementById('signup-btn');
+const signupBtn = document.getElementById('signup-btn'); 
 const logoutBtn = document.getElementById('logout-btn');
 const userDisplayEmail = document.getElementById('user-display-email');
 const chatWindow = document.getElementById('chat-window');
@@ -64,35 +56,38 @@ const messageInput = document.getElementById('message-input');
 const sendBtn = document.getElementById('send-btn');
 const attachBtn = document.getElementById('attach-btn'); 
 const fileInput = document.getElementById('file-input');   
+const usersListContainer = document.getElementById('users-list');
 
-let unsubscribeFromMessages = null; // Holds active database listener sync pointer
+let activeSelectedUserId = null; 
+let activeSelectedUserEmail = null;
+let unsubscribeFromMessages = null; 
+let cachedUnreadCounts = {}; 
 
 // ============================================================================
-// 4. AUTHENTICATION TRACKER (Checks if a user is logged in or out)
+// 4. AUTHENTICATION TRACKER
 // ============================================================================
-onAuthStateChanged(auth, (user) => {
+onAuthStateChanged(auth, async (user) => {
     if (user) {
-        // User is signed in -> Show Chat UI, Hide Login UI
         authContainer.style.display = 'none';
         chatContainer.style.display = 'flex';
         userDisplayEmail.textContent = `Logged in as: ${user.email}`;
         
-        // Clear credential cache input elements
-        emailInput.value = '';
-        passwordInput.value = '';
+        await setDoc(doc(db, "users", user.uid), {
+            uid: user.uid,
+            email: user.email,
+            lastSeen: serverTimestamp()
+        }, { merge: true });
 
-        // Initialize our live incoming message engine
-        listenForMessages();
+        emailInput.value = ''; 
+        passwordInput.value = '';
+        
+        listenToAvailableUsersList(); 
+        listenForGlobalUnreadBadges();
     } else {
-        // User is signed out -> Show Login UI, Hide Chat UI
         authContainer.style.display = 'block';
         chatContainer.style.display = 'none';
-        chatWindow.innerHTML = ''; 
-        
-        // Kill listener socket connection to optimize performance when logged out
-        if (unsubscribeFromMessages) {
-            unsubscribeFromMessages();
-        }
+        chatWindow.innerHTML = '<div class="system-message">Select a person from the list to chat, bro!</div>'; 
+        if (unsubscribeFromMessages) unsubscribeFromMessages();
     }
 });
 
@@ -108,8 +103,16 @@ signupBtn.addEventListener('click', async () => {
     if (!email || !password) return alert('Please enter both email and password, bro.');
 
     try {
-        await createUserWithEmailAndPassword(auth, email, password);
-        alert('Account created successfully!');
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        const newUser = userCredential.user;
+
+        await setDoc(doc(db, "users", newUser.uid), {
+            uid: newUser.uid,
+            email: newUser.email,
+            lastSeen: serverTimestamp()
+        });
+
+        alert('Account created successfully, bro! You are now visible to everyone.');
     } catch (error) {
         alert(`Sign Up Error: ${error.message}`);
     }
@@ -123,131 +126,98 @@ loginBtn.addEventListener('click', async () => {
     if (!email || !password) return alert('Please enter both email and password.');
 
     try {
-        await signInWithEmailAndPassword(auth, email, password);
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        const user = userCredential.user;
+
+        await setDoc(doc(db, "users", user.uid), {
+            uid: user.uid,
+            email: user.email,
+            lastSeen: serverTimestamp()
+        }, { merge: true });
+
     } catch (error) {
         alert(`Login Error: ${error.message}`);
     }
 });
 
-// Logout Handler
-logoutBtn.addEventListener('click', () => {
-    signOut(auth).catch((error) => alert(`Logout Error: ${error.message}`));
-});
+logoutBtn.addEventListener('click', () => signOut(auth));
 
 // ============================================================================
-// 6. REAL-TIME MESSAGING ENGINE & MEDIA UPLOADS
+// 6. REAL-TIME MESSAGING ENGINE & SIDEBAR GENERATION
 // ============================================================================
 
-// Trigger hidden file selector when clicking the attach button
-attachBtn.addEventListener('click', () => fileInput.click());
+function listenToAvailableUsersList() {
+    onSnapshot(collection(db, "users"), (snapshot) => {
+        usersListContainer.innerHTML = '';
+        snapshot.forEach((userDoc) => {
+            const userData = userDoc.data();
+            if (userData.uid === auth.currentUser.uid) return; 
 
-// Handle file selection, storage uploads, and firestore references
-fileInput.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+            const initials = userData.email.substring(0, 2).toUpperCase();
+            const unreadCount = cachedUnreadCounts[userData.uid] || 0;
 
-    const currentUser = auth.currentUser;
-    if (!currentUser) return alert("You must be logged in to send media files, bro.");
+            const bubbleItem = document.createElement('div');
+            bubbleItem.className = `user-bubble-item ${activeSelectedUserId === userData.uid ? 'active' : ''}`;
+            bubbleItem.innerHTML = `
+                <div class="bubble-avatar">${initials}</div>
+                <div class="bubble-info">
+                    <span class="bubble-name">${userData.email.split('@')[0]}</span>
+                    <span class="bubble-status">Click to open chat</span>
+                </div>
+                ${unreadCount > 0 ? `<div class="unread-badge">${unreadCount}</div>` : ''}
+            `;
 
-    // Define a unique dynamic path for the storage node
-    const fileRef = ref(storage, `chats/${Date.now()}_${file.name}`);
-    
-    // Injected transient loading UI tag
-    const loadingDiv = document.createElement('div');
-    loadingDiv.className = 'system-message';
-    loadingDiv.id = 'upload-loading';
-    loadingDiv.textContent = 'Uploading media asset...';
-    chatWindow.appendChild(loadingDiv);
-    chatWindow.scrollTop = chatWindow.scrollHeight;
-
-    try {
-        // 1. Upload binary stream payload directly into cloud bucket storage
-        await uploadBytes(fileRef, file);
-        
-        // 2. Fetch the newly created storage token download url string
-        const downloadURL = await getDownloadURL(fileRef);
-        
-        // 3. Write data schema package to firestore logs collection
-        await addDoc(collection(db, "messages"), {
-            text: "", 
-            fileUrl: downloadURL,
-            fileType: file.type.startsWith('image/') ? 'image' : 'video',
-            senderEmail: currentUser.email,
-            senderId: currentUser.uid,
-            timestamp: serverTimestamp()
+            bubbleItem.addEventListener('click', () => selectActiveTargetUserChat(userData.uid, userData.email));
+            usersListContainer.appendChild(bubbleItem);
         });
-
-    } catch (error) {
-        console.error("Upload process error logging: ", error);
-        alert("Failed to upload media file.");
-    } finally {
-        // Purge placeholder loading elements
-        const loader = document.getElementById('upload-loading');
-        if (loader) loader.remove();
-        fileInput.value = ''; // Reset input target track
-    }
-});
-
-// Function to Send standard text message
-async function sendMessage() {
-    const messageText = messageInput.value.trim();
-    if (!messageText) return; // Prevent pushing whitespace lines
-
-    const currentUser = auth.currentUser;
-    if (!currentUser) return alert("You must be logged in to send messages.");
-
-    try {
-        await addDoc(collection(db, "messages"), {
-            text: messageText,
-            fileUrl: "",
-            fileType: "text",
-            senderEmail: currentUser.email,
-            senderId: currentUser.uid,
-            timestamp: serverTimestamp() // Atomic clock sync time stamp
-        });
-        messageInput.value = '';
-        messageInput.focus();
-    } catch (error) {
-        console.error("Text push failure logs: ", error);
-        alert("Failed to send message.");
-    }
+    });
 }
 
-// Global text interaction UI listeners
-sendBtn.addEventListener('click', sendMessage);
-messageInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
+function getConversationRoomId(uid1, uid2) {
+    return uid1 < uid2 ? `${uid1}_${uid2}` : `${uid2}_${uid1}`;
+}
 
-// Stream and render messages (Supports layout distribution changes for text/media content)
-function listenForMessages() {
-    const messagesQuery = query(collection(db, "messages"), orderBy("timestamp", "asc"));
+function selectActiveTargetUserChat(targetUid, targetEmail) {
+    activeSelectedUserId = targetUid;
+    activeSelectedUserEmail = targetEmail;
+    
+    document.getElementById('current-chat-title').textContent = `Chat with ${targetEmail.split('@')[0]}`;
+    document.getElementById('active-user-avatar').textContent = targetEmail.substring(0,2).toUpperCase();
+    
+    messageInput.disabled = false;
+    sendBtn.disabled = false;
+
+    cachedUnreadCounts[targetUid] = 0;
+    listenToAvailableUsersList();
+
+    listenForActiveMessages();
+}
+
+function listenForActiveMessages() {
+    if (unsubscribeFromMessages) unsubscribeFromMessages();
+
+    const roomId = getConversationRoomId(auth.currentUser.uid, activeSelectedUserId);
+    const messagesQuery = query(collection(db, "rooms", roomId, "messages"), orderBy("timestamp", "asc"));
 
     unsubscribeFromMessages = onSnapshot(messagesQuery, (snapshot) => {
-        chatWindow.innerHTML = ''; // Fresh render layout strip
-        
+        chatWindow.innerHTML = '';
+        if (snapshot.empty) {
+            chatWindow.innerHTML = '<div class="system-message">No messages yet. Say hi, bro!</div>';
+        }
+
         snapshot.forEach((snapshotDoc) => {
             const data = snapshotDoc.data();
-            if (!data.timestamp) return; // Ignore local offline cache rendering adjustments
-
             const messageElement = document.createElement('div');
             const isSentByMe = data.senderId === auth.currentUser.uid;
             messageElement.classList.add('message', isSentByMe ? 'sent' : 'received');
 
-            const date = data.timestamp.toDate();
-            const formattedTime = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const formattedTime = data.timestamp ? data.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Just Now";
 
-            // Evaluate data packet type definitions to assign conditional body template injections
-            let contentHTML = '';
-            if (data.fileType === 'image') {
-                contentHTML = `<img src="${data.fileUrl}" class="chat-media" alt="Shared image" loading="lazy">`;
-            } else if (data.fileType === 'video') {
-                contentHTML = `<video src="${data.fileUrl}" class="chat-media" controls></video>`;
-            } else {
-                contentHTML = `<span class="message-text">${escapeHTML(data.text)}</span>`;
-            }
+            let contentHTML = data.fileUrl 
+                ? `<img src="${data.fileUrl}" class="chat-media" alt="Shared image" loading="lazy">` 
+                : `<span class="message-text">${escapeHTML(data.text)}</span>`;
 
-            // Combine frame contents with sender headers and structural delete controls
             messageElement.innerHTML = `
-                ${!isSentByMe ? `<span class="sender-meta">${data.senderEmail.split('@')[0]}</span>` : ''}
                 <div class="message-content">
                     ${contentHTML}
                     ${isSentByMe ? `<button class="delete-btn" data-id="${snapshotDoc.id}">🗑️</button>` : ''}
@@ -257,29 +227,139 @@ function listenForMessages() {
 
             chatWindow.appendChild(messageElement);
         });
-        
         chatWindow.scrollTop = chatWindow.scrollHeight;
-    }, (error) => {
-        console.error("Realtime pipe listener crashed: ", error);
     });
 }
 
-// Intercept deletion execution streams targeting matching record entries hashes
+function listenForGlobalUnreadBadges() {
+    onSnapshot(collection(db, "global_unread_tracker"), (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+            if (change.type === "added") {
+                const data = change.doc.data();
+                if (data.receiverId === auth.currentUser.uid && data.senderId !== activeSelectedUserId) {
+                    cachedUnreadCounts[data.senderId] = (cachedUnreadCounts[data.senderId] || 0) + 1;
+                }
+            }
+        });
+        listenToAvailableUsersList();
+    });
+}
+
+async function sendMessage() {
+    const text = messageInput.value.trim();
+    if (!text || !activeSelectedUserId) return;
+
+    const roomId = getConversationRoomId(auth.currentUser.uid, activeSelectedUserId);
+    messageInput.value = '';
+
+    try {
+        await addDoc(collection(db, "rooms", roomId, "messages"), {
+            text: text, fileUrl: "", senderId: auth.currentUser.uid, timestamp: serverTimestamp()
+        });
+        await addDoc(collection(db, "global_unread_tracker"), {
+            senderId: auth.currentUser.uid, receiverId: activeSelectedUserId, timestamp: serverTimestamp()
+        });
+    } catch (e) { console.error(e); }
+    messageInput.focus();
+}
+
+sendBtn.addEventListener('click', sendMessage);
+messageInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
+
+// ============================================================================
+// 7. HIGH-PERFORMANCE 2MB+ IMAGE ON-THE-FLY COMPRESSION ENGINE
+// ============================================================================
+attachBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file || !activeSelectedUserId) return;
+
+    const roomId = getConversationRoomId(auth.currentUser.uid, activeSelectedUserId);
+
+    // Dynamic processing indicator UI flag insertion
+    const loader = document.createElement('div');
+    loader.className = 'system-message'; 
+    loader.id = 'img-loading-flag'; 
+    loader.textContent = 'Compressing and processing high-res image, bro...';
+    chatWindow.appendChild(loader);
+    chatWindow.scrollTop = chatWindow.scrollHeight;
+
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    
+    reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+
+        img.onload = async () => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // Establish proportional safe limits to scale layout boundaries
+            const MAX_WIDTH = 1200;
+            const MAX_HEIGHT = 1200;
+            let width = img.width;
+            let height = img.height;
+
+            if (width > height) {
+                if (width > MAX_WIDTH) {
+                    height *= MAX_WIDTH / width;
+                    width = MAX_WIDTH;
+                }
+            } else {
+                if (height > MAX_HEIGHT) {
+                    width *= MAX_HEIGHT / height;
+                    height = MAX_HEIGHT;
+                }
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            ctx.drawImage(img, 0, 0, width, height);
+
+            // Compress format to standard JPEG and set threshold conversion quality density to 60%
+            const compressedBase64 = canvas.toDataURL('image/jpeg', 0.6);
+
+            try {
+                await addDoc(collection(db, "rooms", roomId, "messages"), {
+                    text: "", 
+                    fileUrl: compressedBase64, 
+                    senderId: auth.currentUser.uid, 
+                    timestamp: serverTimestamp()
+                });
+                await addDoc(collection(db, "global_unread_tracker"), {
+                    senderId: auth.currentUser.uid, 
+                    receiverId: activeSelectedUserId, 
+                    timestamp: serverTimestamp()
+                });
+            } catch (err) { 
+                alert("Failed to send image."); 
+            } finally { 
+                if(document.getElementById('img-loading-flag')) document.getElementById('img-loading-flag').remove(); 
+                fileInput.value = ''; 
+            }
+        };
+    };
+
+    reader.onerror = () => {
+        alert("Error handling image binary encoding streams.");
+        if(document.getElementById('img-loading-flag')) document.getElementById('img-loading-flag').remove();
+    };
+});
+
+// ============================================================================
+// 8. ATOMIC MESSAGE DELETION INTERCEPTOR
+// ============================================================================
 chatWindow.addEventListener('click', async (e) => {
     if (e.target.classList.contains('delete-btn')) {
-        const messageId = e.target.getAttribute('data-id');
-        if (confirm("Are you sure you want to delete this message, bro?")) {
-            try { 
-                await deleteDoc(doc(db, "messages", messageId)); 
-            } catch (error) { 
-                console.error("Removal request failed: ", error);
-                alert("Failed to delete."); 
-            }
+        const msgId = e.target.getAttribute('data-id');
+        const roomId = getConversationRoomId(auth.currentUser.uid, activeSelectedUserId);
+        if (confirm("Delete this message, bro?")) {
+            try { await deleteDoc(doc(db, "rooms", roomId, "messages", msgId)); } catch(e) { alert("Failed deletion mapping."); }
         }
     }
 });
 
-// Input sanitize validation filter
 function escapeHTML(str) {
     return str.replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
 }
