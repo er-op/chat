@@ -1,5 +1,5 @@
 // ============================================================================
-// 1. FIREBASE SDK IMPORTS (Loading Firebase directly via CDN)
+// 1. FIREBASE SDK IMPORTS (Updated with Storage)
 // ============================================================================
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { 
@@ -16,12 +16,20 @@ import {
     query, 
     orderBy, 
     onSnapshot, 
-    serverTimestamp 
+    serverTimestamp,
+    doc,
+    deleteDoc 
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { 
+    getStorage, 
+    ref, 
+    uploadBytes, 
+    getDownloadURL 
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
 // ============================================================================
 // 2. YOUR FIREBASE CONFIGURATION
-// Replace the placeholder strings below with your actual keys from Firebase Console!
+// Keep your actual keys pasted here exactly as you had them before!
 // ============================================================================
 const firebaseConfig = {
   apiKey: "AIzaSyB1uzmDbEQMFHvD8J9EkUDyj5Hnc36ImG4",
@@ -33,10 +41,12 @@ const firebaseConfig = {
   measurementId: "G-60EH4K3X4Z"
 };
 
-// Initialize Firebase App, Auth, and Firestore Database
+
+// Initialize Firebase Services
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const storage = getStorage(app); 
 
 // ============================================================================
 // 3. DOM ELEMENT REFERENCES
@@ -52,32 +62,34 @@ const userDisplayEmail = document.getElementById('user-display-email');
 const chatWindow = document.getElementById('chat-window');
 const messageInput = document.getElementById('message-input');
 const sendBtn = document.getElementById('send-btn');
+const attachBtn = document.getElementById('attach-btn'); 
+const fileInput = document.getElementById('file-input');   
 
-let unsubscribeFromMessages = null; // Variable to hold our real-time database listener
+let unsubscribeFromMessages = null; // Holds active database listener sync pointer
 
 // ============================================================================
 // 4. AUTHENTICATION TRACKER (Checks if a user is logged in or out)
 // ============================================================================
 onAuthStateChanged(auth, (user) => {
     if (user) {
-        // User is signed in -> Show Chat, Hide Login
+        // User is signed in -> Show Chat UI, Hide Login UI
         authContainer.style.display = 'none';
         chatContainer.style.display = 'flex';
         userDisplayEmail.textContent = `Logged in as: ${user.email}`;
         
-        // Clear input credentials
+        // Clear credential cache input elements
         emailInput.value = '';
         passwordInput.value = '';
 
-        // Start listening for real-time messages
+        // Initialize our live incoming message engine
         listenForMessages();
     } else {
-        // User is signed out -> Show Login, Hide Chat
+        // User is signed out -> Show Login UI, Hide Chat UI
         authContainer.style.display = 'block';
         chatContainer.style.display = 'none';
-        chatWindow.innerHTML = ''; // Clear chat window cache
+        chatWindow.innerHTML = ''; 
         
-        // Unsubscribe from database listener to save performance/data usage
+        // Kill listener socket connection to optimize performance when logged out
         if (unsubscribeFromMessages) {
             unsubscribeFromMessages();
         }
@@ -88,7 +100,7 @@ onAuthStateChanged(auth, (user) => {
 // 5. SIGN UP, LOGIN & LOGOUT UTILITIES
 // ============================================================================
 
-// Sign Up Action
+// Sign Up Handler
 signupBtn.addEventListener('click', async () => {
     const email = emailInput.value.trim();
     const password = passwordInput.value;
@@ -103,7 +115,7 @@ signupBtn.addEventListener('click', async () => {
     }
 });
 
-// Login Action
+// Login Handler
 loginBtn.addEventListener('click', async () => {
     const email = emailInput.value.trim();
     const password = passwordInput.value;
@@ -117,92 +129,157 @@ loginBtn.addEventListener('click', async () => {
     }
 });
 
-// Logout Action
+// Logout Handler
 logoutBtn.addEventListener('click', () => {
     signOut(auth).catch((error) => alert(`Logout Error: ${error.message}`));
 });
 
-
 // ============================================================================
-// 6. REAL-TIME MESSAGING ENGINE
+// 6. REAL-TIME MESSAGING ENGINE & MEDIA UPLOADS
 // ============================================================================
 
-// Function to Send a Message to Firestore Database
+// Trigger hidden file selector when clicking the attach button
+attachBtn.addEventListener('click', () => fileInput.click());
+
+// Handle file selection, storage uploads, and firestore references
+fileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const currentUser = auth.currentUser;
+    if (!currentUser) return alert("You must be logged in to send media files, bro.");
+
+    // Define a unique dynamic path for the storage node
+    const fileRef = ref(storage, `chats/${Date.now()}_${file.name}`);
+    
+    // Injected transient loading UI tag
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'system-message';
+    loadingDiv.id = 'upload-loading';
+    loadingDiv.textContent = 'Uploading media asset...';
+    chatWindow.appendChild(loadingDiv);
+    chatWindow.scrollTop = chatWindow.scrollHeight;
+
+    try {
+        // 1. Upload binary stream payload directly into cloud bucket storage
+        await uploadBytes(fileRef, file);
+        
+        // 2. Fetch the newly created storage token download url string
+        const downloadURL = await getDownloadURL(fileRef);
+        
+        // 3. Write data schema package to firestore logs collection
+        await addDoc(collection(db, "messages"), {
+            text: "", 
+            fileUrl: downloadURL,
+            fileType: file.type.startsWith('image/') ? 'image' : 'video',
+            senderEmail: currentUser.email,
+            senderId: currentUser.uid,
+            timestamp: serverTimestamp()
+        });
+
+    } catch (error) {
+        console.error("Upload process error logging: ", error);
+        alert("Failed to upload media file.");
+    } finally {
+        // Purge placeholder loading elements
+        const loader = document.getElementById('upload-loading');
+        if (loader) loader.remove();
+        fileInput.value = ''; // Reset input target track
+    }
+});
+
+// Function to Send standard text message
 async function sendMessage() {
     const messageText = messageInput.value.trim();
-    if (!messageText) return; // Prevent sending blank messages
+    if (!messageText) return; // Prevent pushing whitespace lines
 
     const currentUser = auth.currentUser;
     if (!currentUser) return alert("You must be logged in to send messages.");
 
     try {
-        // Add a new document to the "messages" collection in Firestore
         await addDoc(collection(db, "messages"), {
             text: messageText,
+            fileUrl: "",
+            fileType: "text",
             senderEmail: currentUser.email,
             senderId: currentUser.uid,
-            timestamp: serverTimestamp() // Uses cloud server time to ensure order accuracy
+            timestamp: serverTimestamp() // Atomic clock sync time stamp
         });
-        
-        messageInput.value = ''; // Reset input field
+        messageInput.value = '';
         messageInput.focus();
     } catch (error) {
-        console.error("Error sending message: ", error);
+        console.error("Text push failure logs: ", error);
         alert("Failed to send message.");
     }
 }
 
-// Event Listeners for Send triggers
+// Global text interaction UI listeners
 sendBtn.addEventListener('click', sendMessage);
-messageInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') sendMessage();
-});
+messageInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
 
-// Function that streams messages from Firestore in Real-Time
+// Stream and render messages (Supports layout distribution changes for text/media content)
 function listenForMessages() {
-    // Create a query to look at the "messages" collection ordered by timestamp
     const messagesQuery = query(collection(db, "messages"), orderBy("timestamp", "asc"));
 
-    // setup the onSnapshot real-time listener
     unsubscribeFromMessages = onSnapshot(messagesQuery, (snapshot) => {
-        chatWindow.innerHTML = ''; // Wipe window clean before reloading updated logs
+        chatWindow.innerHTML = ''; // Fresh render layout strip
         
-        snapshot.forEach((doc) => {
-            const data = doc.data();
-            if (!data.timestamp) return; // Skip temporary rendering errors while cloud sets timestamps
+        snapshot.forEach((snapshotDoc) => {
+            const data = snapshotDoc.data();
+            if (!data.timestamp) return; // Ignore local offline cache rendering adjustments
 
             const messageElement = document.createElement('div');
-            
-            // Check if the message belongs to the current user or someone else
             const isSentByMe = data.senderId === auth.currentUser.uid;
-            
-            // Apply corresponding styling tags based on sender context
             messageElement.classList.add('message', isSentByMe ? 'sent' : 'received');
 
-            // Format JavaScript timestamp date into clean readable hours/minutes
             const date = data.timestamp.toDate();
             const formattedTime = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-            // Structure inside chat bubbles
+            // Evaluate data packet type definitions to assign conditional body template injections
+            let contentHTML = '';
+            if (data.fileType === 'image') {
+                contentHTML = `<img src="${data.fileUrl}" class="chat-media" alt="Shared image" loading="lazy">`;
+            } else if (data.fileType === 'video') {
+                contentHTML = `<video src="${data.fileUrl}" class="chat-media" controls></video>`;
+            } else {
+                contentHTML = `<span class="message-text">${escapeHTML(data.text)}</span>`;
+            }
+
+            // Combine frame contents with sender headers and structural delete controls
             messageElement.innerHTML = `
                 ${!isSentByMe ? `<span class="sender-meta">${data.senderEmail.split('@')[0]}</span>` : ''}
-                <span class="message-text">${escapeHTML(data.text)}</span>
+                <div class="message-content">
+                    ${contentHTML}
+                    ${isSentByMe ? `<button class="delete-btn" data-id="${snapshotDoc.id}">🗑️</button>` : ''}
+                </div>
                 <span class="timestamp">${formattedTime}</span>
             `;
 
             chatWindow.appendChild(messageElement);
         });
-
-        // Automatically scroll to the absolute bottom when a new message drops in
+        
         chatWindow.scrollTop = chatWindow.scrollHeight;
     }, (error) => {
-        console.error("Database streaming error: ", error);
+        console.error("Realtime pipe listener crashed: ", error);
     });
 }
 
-// Security Helper: Stops users from injecting harmful HTML/Scripts into chat text
+// Intercept deletion execution streams targeting matching record entries hashes
+chatWindow.addEventListener('click', async (e) => {
+    if (e.target.classList.contains('delete-btn')) {
+        const messageId = e.target.getAttribute('data-id');
+        if (confirm("Are you sure you want to delete this message, bro?")) {
+            try { 
+                await deleteDoc(doc(db, "messages", messageId)); 
+            } catch (error) { 
+                console.error("Removal request failed: ", error);
+                alert("Failed to delete."); 
+            }
+        }
+    }
+});
+
+// Input sanitize validation filter
 function escapeHTML(str) {
-    return str.replace(/[&<>'"]/g, 
-        tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
-    );
+    return str.replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
 }
