@@ -19,7 +19,8 @@ import {
     serverTimestamp,
     doc,
     deleteDoc,
-    setDoc 
+    setDoc,
+    getDocs 
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 // ============================================================================
@@ -50,18 +51,27 @@ const passwordInput = document.getElementById('password');
 const loginBtn = document.getElementById('login-btn');
 const signupBtn = document.getElementById('signup-btn'); 
 const logoutBtn = document.getElementById('logout-btn');
+const clearChatBtn = document.getElementById('clear-chat-btn'); 
 const userDisplayEmail = document.getElementById('user-display-email');
 const chatWindow = document.getElementById('chat-window');
 const messageInput = document.getElementById('message-input');
 const sendBtn = document.getElementById('send-btn');
 const attachBtn = document.getElementById('attach-btn'); 
+const voiceBtn = document.getElementById('voice-btn'); 
 const fileInput = document.getElementById('file-input');   
 const usersListContainer = document.getElementById('users-list');
 
 let activeSelectedUserId = null; 
 let activeSelectedUserEmail = null;
 let unsubscribeFromMessages = null; 
+let unsubscribeFromUsers = null;
+let unsubscribeFromUnread = null;
 let cachedUnreadCounts = {}; 
+
+// Voice Recording Hardware State Trackers
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecordingAudio = false;
 
 // ============================================================================
 // 4. AUTHENTICATION TRACKER
@@ -86,8 +96,16 @@ onAuthStateChanged(auth, async (user) => {
     } else {
         authContainer.style.display = 'block';
         chatContainer.style.display = 'none';
-        chatWindow.innerHTML = '<div class="system-message">Select a person from the list to chat, bro!</div>'; 
+        chatWindow.innerHTML = '<div class="system-message">Select an active friend bubble from the left side to load history, bro!</div>'; 
+        clearChatBtn.style.display = 'none'; 
+        
         if (unsubscribeFromMessages) unsubscribeFromMessages();
+        if (unsubscribeFromUsers) unsubscribeFromUsers();
+        if (unsubscribeFromUnread) unsubscribeFromUnread();
+        
+        activeSelectedUserId = null;
+        activeSelectedUserEmail = null;
+        cachedUnreadCounts = {};
     }
 });
 
@@ -95,7 +113,6 @@ onAuthStateChanged(auth, async (user) => {
 // 5. SIGN UP, LOGIN & LOGOUT UTILITIES
 // ============================================================================
 
-// Sign Up Handler
 signupBtn.addEventListener('click', async () => {
     const email = emailInput.value.trim();
     const password = passwordInput.value;
@@ -118,7 +135,6 @@ signupBtn.addEventListener('click', async () => {
     }
 });
 
-// Login Handler
 loginBtn.addEventListener('click', async () => {
     const email = emailInput.value.trim();
     const password = passwordInput.value;
@@ -147,11 +163,13 @@ logoutBtn.addEventListener('click', () => signOut(auth));
 // ============================================================================
 
 function listenToAvailableUsersList() {
-    onSnapshot(collection(db, "users"), (snapshot) => {
+    if (unsubscribeFromUsers) unsubscribeFromUsers();
+
+    unsubscribeFromUsers = onSnapshot(collection(db, "users"), (snapshot) => {
         usersListContainer.innerHTML = '';
         snapshot.forEach((userDoc) => {
             const userData = userDoc.data();
-            if (userData.uid === auth.currentUser.uid) return; 
+            if (!auth.currentUser || userData.uid === auth.currentUser.uid) return; 
 
             const initials = userData.email.substring(0, 2).toUpperCase();
             const unreadCount = cachedUnreadCounts[userData.uid] || 0;
@@ -186,10 +204,11 @@ function selectActiveTargetUserChat(targetUid, targetEmail) {
     
     messageInput.disabled = false;
     sendBtn.disabled = false;
+    voiceBtn.disabled = false; 
+    clearChatBtn.style.display = 'block'; 
 
     cachedUnreadCounts[targetUid] = 0;
     listenToAvailableUsersList();
-
     listenForActiveMessages();
 }
 
@@ -203,6 +222,7 @@ function listenForActiveMessages() {
         chatWindow.innerHTML = '';
         if (snapshot.empty) {
             chatWindow.innerHTML = '<div class="system-message">No messages yet. Say hi, bro!</div>';
+            return;
         }
 
         snapshot.forEach((snapshotDoc) => {
@@ -213,9 +233,14 @@ function listenForActiveMessages() {
 
             const formattedTime = data.timestamp ? data.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Just Now";
 
-            let contentHTML = data.fileUrl 
-                ? `<img src="${data.fileUrl}" class="chat-media" alt="Shared image" loading="lazy">` 
-                : `<span class="message-text">${escapeHTML(data.text)}</span>`;
+            let contentHTML = '';
+            if (data.fileType === 'voice') {
+                contentHTML = `<audio src="${data.fileUrl}" controls class="chat-audio-player"></audio>`;
+            } else if (data.fileType === 'image') {
+                contentHTML = `<img src="${data.fileUrl}" class="chat-media" alt="Shared image" loading="lazy">`;
+            } else {
+                contentHTML = `<span class="message-text">${escapeHTML(data.text || '')}</span>`;
+            }
 
             messageElement.innerHTML = `
                 <div class="message-content">
@@ -232,12 +257,17 @@ function listenForActiveMessages() {
 }
 
 function listenForGlobalUnreadBadges() {
-    onSnapshot(collection(db, "global_unread_tracker"), (snapshot) => {
+    if (unsubscribeFromUnread) unsubscribeFromUnread();
+
+    unsubscribeFromUnread = onSnapshot(collection(db, "global_unread_tracker"), (snapshot) => {
         snapshot.docChanges().forEach((change) => {
             if (change.type === "added") {
                 const data = change.doc.data();
-                if (data.receiverId === auth.currentUser.uid && data.senderId !== activeSelectedUserId) {
+                if (auth.currentUser && data.receiverId === auth.currentUser.uid && data.senderId !== activeSelectedUserId) {
                     cachedUnreadCounts[data.senderId] = (cachedUnreadCounts[data.senderId] || 0) + 1;
+                }
+                if (auth.currentUser && data.receiverId === auth.currentUser.uid && data.senderId === activeSelectedUserId) {
+                    deleteDoc(doc(db, "global_unread_tracker", change.doc.id)).catch(() => {});
                 }
             }
         });
@@ -254,7 +284,7 @@ async function sendMessage() {
 
     try {
         await addDoc(collection(db, "rooms", roomId, "messages"), {
-            text: text, fileUrl: "", senderId: auth.currentUser.uid, timestamp: serverTimestamp()
+            text: text, fileUrl: "", fileType: "text", senderId: auth.currentUser.uid, timestamp: serverTimestamp()
         });
         await addDoc(collection(db, "global_unread_tracker"), {
             senderId: auth.currentUser.uid, receiverId: activeSelectedUserId, timestamp: serverTimestamp()
@@ -267,7 +297,7 @@ sendBtn.addEventListener('click', sendMessage);
 messageInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
 
 // ============================================================================
-// 7. HIGH-PERFORMANCE 2MB+ IMAGE ON-THE-FLY COMPRESSION ENGINE
+// 7. HIGH-PERFORMANCE IMAGE COMPRESSION ENGINE
 // ============================================================================
 attachBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', async (e) => {
@@ -276,7 +306,6 @@ fileInput.addEventListener('change', async (e) => {
 
     const roomId = getConversationRoomId(auth.currentUser.uid, activeSelectedUserId);
 
-    // Dynamic processing indicator UI flag insertion
     const loader = document.createElement('div');
     loader.className = 'system-message'; 
     loader.id = 'img-loading-flag'; 
@@ -295,9 +324,8 @@ fileInput.addEventListener('change', async (e) => {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
 
-            // Establish proportional safe limits to scale layout boundaries
-            const MAX_WIDTH = 1200;
-            const MAX_HEIGHT = 1200;
+            const MAX_WIDTH = 800; 
+            const MAX_HEIGHT = 800;
             let width = img.width;
             let height = img.height;
 
@@ -317,13 +345,13 @@ fileInput.addEventListener('change', async (e) => {
             canvas.height = height;
             ctx.drawImage(img, 0, 0, width, height);
 
-            // Compress format to standard JPEG and set threshold conversion quality density to 60%
-            const compressedBase64 = canvas.toDataURL('image/jpeg', 0.6);
+            const compressedBase64 = canvas.toDataURL('image/jpeg', 0.5);
 
             try {
                 await addDoc(collection(db, "rooms", roomId, "messages"), {
                     text: "", 
                     fileUrl: compressedBase64, 
+                    fileType: "image",
                     senderId: auth.currentUser.uid, 
                     timestamp: serverTimestamp()
                 });
@@ -342,20 +370,119 @@ fileInput.addEventListener('change', async (e) => {
     };
 
     reader.onerror = () => {
-        alert("Error handling image binary encoding streams.");
+        alert("Error handling image data streams.");
         if(document.getElementById('img-loading-flag')) document.getElementById('img-loading-flag').remove();
     };
 });
 
 // ============================================================================
-// 8. ATOMIC MESSAGE DELETION INTERCEPTOR
+// 8. AUDIO RECORDING ENGINE
+// ============================================================================
+voiceBtn.addEventListener('click', async () => {
+    if (!activeSelectedUserId) return;
+
+    if (!isRecordingAudio) {
+        try {
+            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(audioStream);
+            audioChunks = [];
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) audioChunks.push(event.data);
+            };
+
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                
+                if (audioBlob.size > 600000) {
+                    alert("Voice note is too long, bro! Keep it under 30 seconds.");
+                    return;
+                }
+
+                const reader = new FileReader();
+                reader.readAsDataURL(audioBlob); 
+                reader.onloadend = async () => {
+                    const base64AudioString = reader.result;
+                    const roomId = getConversationRoomId(auth.currentUser.uid, activeSelectedUserId);
+
+                    try {
+                        await addDoc(collection(db, "rooms", roomId, "messages"), {
+                            text: "",
+                            fileUrl: base64AudioString,
+                            fileType: "voice", 
+                            senderId: auth.currentUser.uid,
+                            timestamp: serverTimestamp()
+                        });
+                        await addDoc(collection(db, "global_unread_tracker"), { 
+                            senderId: auth.currentUser.uid, 
+                            receiverId: activeSelectedUserId, 
+                            timestamp: serverTimestamp() 
+                        });
+                    } catch (err) { alert("Failed to send voice message, bro."); }
+                };
+            };
+
+            mediaRecorder.start();
+            isRecordingAudio = true;
+            voiceBtn.classList.add('recording-active');
+            voiceBtn.style.color = '#ea0038';
+            messageInput.placeholder = "Recording voice note... Click microphone again to send!";
+        } catch (err) {
+            alert("Microphone hardware permission denied or unavailable, bro!");
+        }
+    } 
+    else {
+        if (mediaRecorder && mediaRecorder.state !== "inactive") {
+            mediaRecorder.stop();
+            mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        }
+        isRecordingAudio = false;
+        voiceBtn.classList.remove('recording-active');
+        voiceBtn.style.color = '#54656f';
+        messageInput.placeholder = "Type a message...";
+    }
+});
+
+// ============================================================================
+// 9. ATOMIC DATABASE MESSAGE DELETION INTERCEPTOR & CLEAR CHAT
 // ============================================================================
 chatWindow.addEventListener('click', async (e) => {
     if (e.target.classList.contains('delete-btn')) {
         const msgId = e.target.getAttribute('data-id');
         const roomId = getConversationRoomId(auth.currentUser.uid, activeSelectedUserId);
-        if (confirm("Delete this message, bro?")) {
-            try { await deleteDoc(doc(db, "rooms", roomId, "messages", msgId)); } catch(e) { alert("Failed deletion mapping."); }
+        
+        if (confirm("Delete this message permanently from the database, bro?")) {
+            try { 
+                await deleteDoc(doc(db, "rooms", roomId, "messages", msgId)); 
+            } catch(e) { 
+                alert("Failed to delete message from the database."); 
+            }
+        }
+    }
+});
+
+clearChatBtn.addEventListener('click', async () => {
+    if (!activeSelectedUserId) return;
+
+    const roomId = getConversationRoomId(auth.currentUser.uid, activeSelectedUserId);
+    
+    if (confirm("Are you completely sure you want to clear this entire chat history, bro?")) {
+        if (confirm("Warning: This action is permanent and will delete all text, pictures, and audio logs from the cloud database! Proceed?")) {
+            try {
+                const messagesRef = collection(db, "rooms", roomId, "messages");
+                const querySnapshot = await getDocs(messagesRef);
+                
+                const deletePromises = [];
+                querySnapshot.forEach((messageDoc) => {
+                    deletePromises.push(deleteDoc(doc(db, "rooms", roomId, "messages", messageDoc.id)));
+                });
+                
+                await Promise.all(deletePromises);
+                alert("Chat cleared successfully, bro!");
+            } catch (err) {
+                console.error(err);
+                alert("Failed to completely clear chat from the database.");
+            }
         }
     }
 });
