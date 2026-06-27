@@ -74,13 +74,24 @@ let audioChunks = [];
 let isRecordingAudio = false;
 
 // ============================================================================
+// 3A. DISPLAY NAME HELPER
+// ============================================================================
+function getDisplayName(email) {
+    const customMap = {
+        "som277482@gmail.com": "eros",
+        "soma277482@gmail.com": "era"
+    };
+    return customMap[email] || email.split('@')[0];
+}
+
+// ============================================================================
 // 4. AUTHENTICATION TRACKER
 // ============================================================================
 onAuthStateChanged(auth, async (user) => {
     if (user) {
         authContainer.style.display = 'none';
         chatContainer.style.display = 'flex';
-        userDisplayEmail.textContent = `Logged in as: ${user.email}`;
+        userDisplayEmail.textContent = `Logged in as: ${getDisplayName(user.email)}`;
         
         await setDoc(doc(db, "users", user.uid), {
             uid: user.uid,
@@ -179,7 +190,7 @@ function listenToAvailableUsersList() {
             bubbleItem.innerHTML = `
                 <div class="bubble-avatar">${initials}</div>
                 <div class="bubble-info">
-                    <span class="bubble-name">${userData.email.split('@')[0]}</span>
+                    <span class="bubble-name">${getDisplayName(userData.email)}</span>
                     <span class="bubble-status">Click to open chat</span>
                 </div>
                 ${unreadCount > 0 ? `<div class="unread-badge">${unreadCount}</div>` : ''}
@@ -199,7 +210,7 @@ function selectActiveTargetUserChat(targetUid, targetEmail) {
     activeSelectedUserId = targetUid;
     activeSelectedUserEmail = targetEmail;
     
-    document.getElementById('current-chat-title').textContent = `Chat with ${targetEmail.split('@')[0]}`;
+    document.getElementById('current-chat-title').textContent = `Chat with ${getDisplayName(targetEmail)}`;
     document.getElementById('active-user-avatar').textContent = targetEmail.substring(0,2).toUpperCase();
     
     messageInput.disabled = false;
