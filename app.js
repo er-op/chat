@@ -9,19 +9,23 @@ import {
     signOut, 
     onAuthStateChanged 
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
 import { 
     getFirestore, 
     collection, 
     addDoc, 
     query, 
     orderBy, 
+    where,
     onSnapshot, 
     serverTimestamp,
     doc,
     deleteDoc,
     setDoc,
-    getDocs 
+    getDocs,
+    updateDoc 
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
 
 // ============================================================================
 // 2. YOUR FIREBASE CONFIGURATION
@@ -61,12 +65,36 @@ const voiceBtn = document.getElementById('voice-btn');
 const fileInput = document.getElementById('file-input');   
 const usersListContainer = document.getElementById('users-list');
 
+
+const voiceCallBtn = document.getElementById('voice-call-btn');
+const incomingCallPopup = document.getElementById('incoming-call-popup');
+const incomingCallText = document.getElementById('incoming-call-text');
+const acceptCallBtn = document.getElementById('accept-call-btn');
+const rejectCallBtn = document.getElementById('reject-call-btn');
+const activeCallBar = document.getElementById('active-call-bar');
+const activeCallText = document.getElementById('active-call-text');
+const endCallBtn = document.getElementById('end-call-btn');
+const remoteAudio = document.getElementById('remote-audio');
+
+
 let activeSelectedUserId = null; 
 let activeSelectedUserEmail = null;
 let unsubscribeFromMessages = null; 
 let unsubscribeFromUsers = null;
 let unsubscribeFromUnread = null;
 let cachedUnreadCounts = {}; 
+
+
+let peerConnection = null;
+let localStream = null;
+let currentCallId = null;
+let currentIncomingCall = null;
+let unsubscribeIncomingCalls = null;
+let unsubscribeCallStatus = null;
+let unsubscribeAnswer = null;
+let unsubscribeRemoteCandidates = null;
+
+
 
 // Voice Recording Hardware State Trackers
 let mediaRecorder = null;
@@ -96,6 +124,7 @@ onAuthStateChanged(auth, async (user) => {
         await setDoc(doc(db, "users", user.uid), {
             uid: user.uid,
             email: user.email,
+            online: true,
             lastSeen: serverTimestamp()
         }, { merge: true });
 
@@ -104,6 +133,7 @@ onAuthStateChanged(auth, async (user) => {
         
         listenToAvailableUsersList(); 
         listenForGlobalUnreadBadges();
+        listenForIncomingVoiceCalls();
     } else {
         authContainer.style.display = 'block';
         chatContainer.style.display = 'none';
@@ -113,6 +143,10 @@ onAuthStateChanged(auth, async (user) => {
         if (unsubscribeFromMessages) unsubscribeFromMessages();
         if (unsubscribeFromUsers) unsubscribeFromUsers();
         if (unsubscribeFromUnread) unsubscribeFromUnread();
+
+        if (unsubscribeIncomingCalls) unsubscribeIncomingCalls();
+        cleanupVoiceCall();
+
         
         activeSelectedUserId = null;
         activeSelectedUserEmail = null;
@@ -159,6 +193,7 @@ loginBtn.addEventListener('click', async () => {
         await setDoc(doc(db, "users", user.uid), {
             uid: user.uid,
             email: user.email,
+            online: true,
             lastSeen: serverTimestamp()
         }, { merge: true });
 
@@ -167,7 +202,17 @@ loginBtn.addEventListener('click', async () => {
     }
 });
 
-logoutBtn.addEventListener('click', () => signOut(auth));
+
+logoutBtn.addEventListener('click', async () => {
+
+    await setDoc(doc(db,"users",auth.currentUser.uid),{
+        online:false,
+        lastSeen:serverTimestamp()
+    },{merge:true});
+
+    signOut(auth);
+});
+
 
 // ============================================================================
 // 6. REAL-TIME MESSAGING ENGINE & SIDEBAR GENERATION
@@ -191,7 +236,8 @@ function listenToAvailableUsersList() {
                 <div class="bubble-avatar">${initials}</div>
                 <div class="bubble-info">
                     <span class="bubble-name">${getDisplayName(userData.email)}</span>
-                    <span class="bubble-status">Click to open chat</span>
+                    <span class="bubble-status">${userData.online ? '🟢 Online' : '⚫ Offline'}</span>
+
                 </div>
                 ${unreadCount > 0 ? `<div class="unread-badge">${unreadCount}</div>` : ''}
             `;
@@ -211,11 +257,23 @@ function selectActiveTargetUserChat(targetUid, targetEmail) {
     activeSelectedUserEmail = targetEmail;
     
     document.getElementById('current-chat-title').textContent = `Chat with ${getDisplayName(targetEmail)}`;
+    onSnapshot(doc(db,"users",targetUid),(docSnap)=>{
+
+    const data=docSnap.data();
+
+    const statusText = data.online
+    ? "🟢 Online"
+    : "⚫ Offline";
+
+    userDisplayEmail.textContent = statusText;
+});
+
     document.getElementById('active-user-avatar').textContent = targetEmail.substring(0,2).toUpperCase();
     
     messageInput.disabled = false;
     sendBtn.disabled = false;
     voiceBtn.disabled = false; 
+    voiceCallBtn.disabled = false;
     clearChatBtn.style.display = 'block'; 
 
     cachedUnreadCounts[targetUid] = 0;
@@ -501,3 +559,307 @@ clearChatBtn.addEventListener('click', async () => {
 function escapeHTML(str) {
     return str.replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
 }
+
+
+// ============================================================================
+// 10. REAL-TIME VOICE CALLING ENGINE - WEBRTC + FIRESTORE SIGNALING
+// ============================================================================
+
+const rtcConfig = {
+    iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" }
+    ]
+};
+
+function createPeerConnection(callId, isCaller) {
+    peerConnection = new RTCPeerConnection(rtcConfig);
+
+    peerConnection.ontrack = (event) => {
+        remoteAudio.srcObject = event.streams[0];
+    };
+
+    peerConnection.onicecandidate = async (event) => {
+        if (event.candidate) {
+            const candidateCollection = isCaller ? "offerCandidates" : "answerCandidates";
+
+            await addDoc(
+                collection(db, "calls", callId, candidateCollection),
+                event.candidate.toJSON()
+            );
+        }
+    };
+
+    peerConnection.onconnectionstatechange = () => {
+        if (
+            peerConnection.connectionState === "disconnected" ||
+            peerConnection.connectionState === "failed" ||
+            peerConnection.connectionState === "closed"
+        ) {
+            cleanupVoiceCall();
+        }
+    };
+
+    return peerConnection;
+}
+
+async function clearOldCandidates(callId) {
+    const offerCandidates = await getDocs(collection(db, "calls", callId, "offerCandidates"));
+    const answerCandidates = await getDocs(collection(db, "calls", callId, "answerCandidates"));
+
+    const deleteList = [];
+
+    offerCandidates.forEach((candidateDoc) => {
+        deleteList.push(deleteDoc(doc(db, "calls", callId, "offerCandidates", candidateDoc.id)));
+    });
+
+    answerCandidates.forEach((candidateDoc) => {
+        deleteList.push(deleteDoc(doc(db, "calls", callId, "answerCandidates", candidateDoc.id)));
+    });
+
+    await Promise.all(deleteList);
+}
+
+async function startVoiceCall() {
+    if (!activeSelectedUserId || !auth.currentUser) return;
+
+    try {
+        const roomId = getConversationRoomId(auth.currentUser.uid, activeSelectedUserId);
+        currentCallId = roomId;
+
+        await clearOldCandidates(currentCallId);
+
+        localStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: false
+        });
+
+        createPeerConnection(currentCallId, true);
+
+        localStream.getTracks().forEach((track) => {
+            peerConnection.addTrack(track, localStream);
+        });
+
+        const offerDescription = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offerDescription);
+
+        const offer = {
+            type: offerDescription.type,
+            sdp: offerDescription.sdp
+        };
+
+        await setDoc(doc(db, "calls", currentCallId), {
+            callerId: auth.currentUser.uid,
+            callerEmail: auth.currentUser.email,
+            receiverId: activeSelectedUserId,
+            receiverEmail: activeSelectedUserEmail,
+            offer: offer,
+            answer: null,
+            status: "ringing",
+            createdAt: serverTimestamp()
+        });
+
+        activeCallText.textContent = `Calling ${getDisplayName(activeSelectedUserEmail)}...`;
+        activeCallBar.style.display = "flex";
+
+        unsubscribeAnswer = onSnapshot(doc(db, "calls", currentCallId), async (snapshot) => {
+            const data = snapshot.data();
+
+            if (!data) return;
+
+            if (data.status === "rejected" || data.status === "ended") {
+                cleanupVoiceCall();
+                return;
+            }
+
+            if (data.answer && peerConnection && !peerConnection.currentRemoteDescription) {
+                const answerDescription = new RTCSessionDescription(data.answer);
+                await peerConnection.setRemoteDescription(answerDescription);
+
+                activeCallText.textContent = `On call with ${getDisplayName(activeSelectedUserEmail)}`;
+            }
+        });
+
+        unsubscribeRemoteCandidates = onSnapshot(
+            collection(db, "calls", currentCallId, "answerCandidates"),
+            (snapshot) => {
+                snapshot.docChanges().forEach((change) => {
+                    if (change.type === "added") {
+                        const candidate = new RTCIceCandidate(change.doc.data());
+                        peerConnection.addIceCandidate(candidate).catch(console.error);
+                    }
+                });
+            }
+        );
+
+        unsubscribeCallStatus = onSnapshot(doc(db, "calls", currentCallId), (snapshot) => {
+            const data = snapshot.data();
+
+            if (!data) return;
+
+            if (data.status === "ended" || data.status === "rejected") {
+                cleanupVoiceCall();
+            }
+        });
+
+    } catch (error) {
+        console.error(error);
+        alert("Unable to start voice call. Please allow microphone permission, bro.");
+        cleanupVoiceCall();
+    }
+}
+
+function listenForIncomingVoiceCalls() {
+    if (unsubscribeIncomingCalls) unsubscribeIncomingCalls();
+
+    const incomingQuery = query(
+        collection(db, "calls"),
+        where("receiverId", "==", auth.currentUser.uid),
+        where("status", "==", "ringing")
+    );
+
+    unsubscribeIncomingCalls = onSnapshot(incomingQuery, (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+            if (change.type === "added") {
+                const callData = change.doc.data();
+
+                currentIncomingCall = {
+                    id: change.doc.id,
+                    data: callData
+                };
+
+                incomingCallText.textContent = `${getDisplayName(callData.callerEmail)} is calling you...`;
+                incomingCallPopup.style.display = "flex";
+            }
+        });
+    });
+}
+
+async function acceptVoiceCall() {
+    if (!currentIncomingCall || !auth.currentUser) return;
+
+    try {
+        currentCallId = currentIncomingCall.id;
+        const callData = currentIncomingCall.data;
+
+        incomingCallPopup.style.display = "none";
+
+        localStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: false
+        });
+
+        createPeerConnection(currentCallId, false);
+
+        localStream.getTracks().forEach((track) => {
+            peerConnection.addTrack(track, localStream);
+        });
+
+        unsubscribeRemoteCandidates = onSnapshot(
+            collection(db, "calls", currentCallId, "offerCandidates"),
+            (snapshot) => {
+                snapshot.docChanges().forEach((change) => {
+                    if (change.type === "added") {
+                        const candidate = new RTCIceCandidate(change.doc.data());
+                        peerConnection.addIceCandidate(candidate).catch(console.error);
+                    }
+                });
+            }
+        );
+
+        const offerDescription = callData.offer;
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(offerDescription));
+
+        const answerDescription = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answerDescription);
+
+        const answer = {
+            type: answerDescription.type,
+            sdp: answerDescription.sdp
+        };
+
+        await updateDoc(doc(db, "calls", currentCallId), {
+            answer: answer,
+            status: "accepted"
+        });
+
+        activeCallText.textContent = `On call with ${getDisplayName(callData.callerEmail)}`;
+        activeCallBar.style.display = "flex";
+
+        unsubscribeCallStatus = onSnapshot(doc(db, "calls", currentCallId), (snapshot) => {
+            const data = snapshot.data();
+
+            if (!data) return;
+
+            if (data.status === "ended" || data.status === "rejected") {
+                cleanupVoiceCall();
+            }
+        });
+
+    } catch (error) {
+        console.error(error);
+        alert("Unable to accept voice call. Please allow microphone permission, bro.");
+        cleanupVoiceCall();
+    }
+}
+
+async function rejectVoiceCall() {
+    if (!currentIncomingCall) return;
+
+    await updateDoc(doc(db, "calls", currentIncomingCall.id), {
+        status: "rejected"
+    });
+
+    incomingCallPopup.style.display = "none";
+    currentIncomingCall = null;
+}
+
+async function endVoiceCall() {
+    if (currentCallId) {
+        await updateDoc(doc(db, "calls", currentCallId), {
+            status: "ended"
+        }).catch(() => {});
+    }
+
+    cleanupVoiceCall();
+}
+
+function cleanupVoiceCall() {
+    if (unsubscribeAnswer) {
+        unsubscribeAnswer();
+        unsubscribeAnswer = null;
+    }
+
+    if (unsubscribeRemoteCandidates) {
+        unsubscribeRemoteCandidates();
+        unsubscribeRemoteCandidates = null;
+    }
+
+    if (unsubscribeCallStatus) {
+        unsubscribeCallStatus();
+        unsubscribeCallStatus = null;
+    }
+
+    if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+    }
+
+    if (localStream) {
+        localStream.getTracks().forEach((track) => track.stop());
+        localStream = null;
+    }
+
+    remoteAudio.srcObject = null;
+
+    activeCallBar.style.display = "none";
+    incomingCallPopup.style.display = "none";
+
+    currentCallId = null;
+    currentIncomingCall = null;
+}
+
+voiceCallBtn.addEventListener("click", startVoiceCall);
+acceptCallBtn.addEventListener("click", acceptVoiceCall);
+rejectCallBtn.addEventListener("click", rejectVoiceCall);
+endCallBtn.addEventListener("click", endVoiceCall);

@@ -51,6 +51,7 @@
                 </div>
                 
                 <div class="header-actions">
+                    <button id="voice-call-btn" class="btn-call" disabled>📞 Call</button>
                     <button id="clear-chat-btn" class="btn-clear" style="display: none;">Clear Chat</button>
                     <button id="logout-btn" class="btn-logout">Logout</button>
                 </div>
@@ -86,6 +87,20 @@
         </div>
 
     </div>
+    <div id="incoming-call-popup" class="call-popup" style="display:none;">
+        <div class="call-box">
+            <h3 id="incoming-call-text">Incoming voice call...</h3>
+            <div class="call-actions">
+                <button id="accept-call-btn" class="accept-call">Accept</button>
+                <button id="reject-call-btn" class="reject-call">Reject</button>
+            </div>
+        </div>
+    </div>
+    <div id="active-call-bar" class="active-call-bar" style="display:none;">
+        <span id="active-call-text">Voice call active</span>
+        <button id="end-call-btn">End Call</button>
+    </div>
+    <audio id="remote-audio" autoplay></audio>
 
     <script type="module" src="app.js"></script>
 </body>
