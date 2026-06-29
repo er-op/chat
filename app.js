@@ -77,6 +77,16 @@ const endCallBtn = document.getElementById('end-call-btn');
 const remoteAudio = document.getElementById('remote-audio');
 
 
+const keywordContainer =
+document.getElementById('keyword-container');
+
+const keywordInput =
+document.getElementById('secret-keyword');
+
+const keywordSubmitBtn =
+document.getElementById('keyword-submit-btn');
+
+
 let activeSelectedUserId = null; 
 let activeSelectedUserEmail = null;
 let unsubscribeFromMessages = null; 
@@ -118,7 +128,9 @@ function getDisplayName(email) {
 onAuthStateChanged(auth, async (user) => {
     if (user) {
         authContainer.style.display = 'none';
-        chatContainer.style.display = 'flex';
+        keywordContainer.style.display = 'block';
+        chatContainer.style.display = 'none';
+
         userDisplayEmail.textContent = `Logged in as: ${getDisplayName(user.email)}`;
         
         await setDoc(doc(db, "users", user.uid), {
@@ -211,6 +223,39 @@ logoutBtn.addEventListener('click', async () => {
     },{merge:true});
 
     signOut(auth);
+});
+
+keywordSubmitBtn.addEventListener('click', () => {
+
+    const keyword =
+    keywordInput.value.trim().toLowerCase();
+
+    if(keyword === "valobashi"){
+
+        keywordContainer.style.display = 'none';
+
+        chatContainer.style.display = 'flex';
+
+    }
+    else{
+
+        alert(
+            "Wrong keyword, bro! Access denied."
+        );
+
+        keywordInput.value = '';
+
+        keywordInput.focus();
+    }
+
+});
+
+keywordInput.addEventListener('keypress',(e)=>{
+
+    if(e.key === 'Enter'){
+        keywordSubmitBtn.click();
+    }
+
 });
 
 
