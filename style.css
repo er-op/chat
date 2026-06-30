@@ -1369,3 +1369,37 @@ font-size:14px;
         font-size:13px;
     }
 }
+
+
+.message-meta{
+    display:flex;
+    align-items:center;
+    justify-content:flex-end;
+    gap:6px;
+    margin-top:5px;
+}
+
+.message-tick{
+    font-size:12px;
+    font-weight:700;
+    letter-spacing:-3px;
+
+    /* Not viewed */
+    color:rgba(255,255,255,.45);
+
+    transition:all .25s ease;
+}
+
+.message-tick.viewed{
+
+    /* Viewed */
+    color:#00ff88;
+
+    text-shadow:
+        0 0 5px rgba(0,255,136,.7),
+        0 0 10px rgba(0,255,136,.35);
+}
+
+.message.received .message-meta{
+    justify-content:flex-start;
+}

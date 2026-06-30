@@ -326,49 +326,97 @@ function selectActiveTargetUserChat(targetUid, targetEmail) {
     listenForActiveMessages();
 }
 
+
 function listenForActiveMessages() {
     if (unsubscribeFromMessages) unsubscribeFromMessages();
 
     const roomId = getConversationRoomId(auth.currentUser.uid, activeSelectedUserId);
-    const messagesQuery = query(collection(db, "rooms", roomId, "messages"), orderBy("timestamp", "asc"));
+    const messagesQuery = query(
+        collection(db, "rooms", roomId, "messages"),
+        orderBy("timestamp", "asc")
+    );
 
-    unsubscribeFromMessages = onSnapshot(messagesQuery, (snapshot) => {
+    unsubscribeFromMessages = onSnapshot(messagesQuery, async (snapshot) => {
         chatWindow.innerHTML = '';
+
         if (snapshot.empty) {
-            chatWindow.innerHTML = '<div class="system-message">No messages yet. Say hi, bro!</div>';
+            chatWindow.innerHTML =
+                '<div class="system-message">No messages yet. Say hi, bro!</div>';
             return;
         }
 
+        const viewedUpdateTasks = [];
+
         snapshot.forEach((snapshotDoc) => {
             const data = snapshotDoc.data();
-            const messageElement = document.createElement('div');
             const isSentByMe = data.senderId === auth.currentUser.uid;
+
+            // Mark received messages as viewed when current user opens chat
+            if (
+                !isSentByMe &&
+                data.senderId === activeSelectedUserId &&
+                data.viewed !== true
+            ) {
+                viewedUpdateTasks.push(
+                    updateDoc(
+                        doc(db, "rooms", roomId, "messages", snapshotDoc.id),
+                        { viewed: true }
+                    )
+                );
+            }
+
+            const messageElement = document.createElement('div');
             messageElement.classList.add('message', isSentByMe ? 'sent' : 'received');
 
-            const formattedTime = data.timestamp ? data.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Just Now";
+            const formattedTime = data.timestamp
+                ? data.timestamp.toDate().toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                })
+                : "Just Now";
 
             let contentHTML = '';
+
             if (data.fileType === 'voice') {
-                contentHTML = `<audio src="${data.fileUrl}" controls class="chat-audio-player"></audio>`;
-            } else if (data.fileType === 'image') {
-                contentHTML = `<img src="${data.fileUrl}" class="chat-media" alt="Shared image" loading="lazy">`;
-            } else {
-                contentHTML = `<span class="message-text">${escapeHTML(data.text || '')}</span>`;
+                contentHTML =
+                    `${data.fileUrl}</audio>`;
+            } 
+            else if (data.fileType === 'image') {
+                contentHTML =
+                    `${data.fileUrl}`;
+            } 
+            else {
+                contentHTML =
+                    `<span class="message-text">${escapeHTML(data.text || '')}</span>`;
             }
+
+            const tickHTML = isSentByMe
+                ? `<span class="message-tick ${data.viewed ? 'viewed' : ''}">✓✓</span>`
+                : '';
 
             messageElement.innerHTML = `
                 <div class="message-content">
                     ${contentHTML}
                     ${isSentByMe ? `<button class="delete-btn" data-id="${snapshotDoc.id}">🗑️</button>` : ''}
                 </div>
-                <span class="timestamp">${formattedTime}</span>
+
+                <div class="message-meta">
+                    <span class="timestamp">${formattedTime}</span>
+                    ${tickHTML}
+                </div>
             `;
 
             chatWindow.appendChild(messageElement);
         });
+
+        if (viewedUpdateTasks.length > 0) {
+            Promise.all(viewedUpdateTasks).catch(console.error);
+        }
+
         chatWindow.scrollTop = chatWindow.scrollHeight;
     });
 }
+
 
 function listenForGlobalUnreadBadges() {
     if (unsubscribeFromUnread) unsubscribeFromUnread();
@@ -389,23 +437,44 @@ function listenForGlobalUnreadBadges() {
     });
 }
 
+
 async function sendMessage() {
     const text = messageInput.value.trim();
-    if (!text || !activeSelectedUserId) return;
+
+    if (!text || !activeSelectedUserId || !auth.currentUser) return;
 
     const roomId = getConversationRoomId(auth.currentUser.uid, activeSelectedUserId);
+
     messageInput.value = '';
+    sendBtn.disabled = true;
 
     try {
         await addDoc(collection(db, "rooms", roomId, "messages"), {
-            text: text, fileUrl: "", fileType: "text", senderId: auth.currentUser.uid, timestamp: serverTimestamp()
+            text: text,
+            fileUrl: "",
+            fileType: "text",
+            senderId: auth.currentUser.uid,
+            receiverId: activeSelectedUserId,
+            viewed: false,
+            timestamp: serverTimestamp()
         });
+
         await addDoc(collection(db, "global_unread_tracker"), {
-            senderId: auth.currentUser.uid, receiverId: activeSelectedUserId, timestamp: serverTimestamp()
+            senderId: auth.currentUser.uid,
+            receiverId: activeSelectedUserId,
+            timestamp: serverTimestamp()
         });
-    } catch (e) { console.error(e); }
-    messageInput.focus();
+
+    } catch (e) {
+        console.error(e);
+        alert("Message sending failed, bro.");
+        messageInput.value = text;
+    } finally {
+        sendBtn.disabled = false;
+        messageInput.focus();
+    }
 }
+
 
 sendBtn.addEventListener('click', sendMessage);
 messageInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
@@ -463,12 +532,15 @@ fileInput.addEventListener('change', async (e) => {
 
             try {
                 await addDoc(collection(db, "rooms", roomId, "messages"), {
-                    text: "", 
-                    fileUrl: compressedBase64, 
+                    text: "",
+                    fileUrl: compressedBase64,
                     fileType: "image",
-                    senderId: auth.currentUser.uid, 
+                    senderId: auth.currentUser.uid,
+                    receiverId: activeSelectedUserId,
+                    viewed: false,
                     timestamp: serverTimestamp()
                 });
+
                 await addDoc(collection(db, "global_unread_tracker"), {
                     senderId: auth.currentUser.uid, 
                     receiverId: activeSelectedUserId, 
@@ -523,10 +595,13 @@ voiceBtn.addEventListener('click', async () => {
                         await addDoc(collection(db, "rooms", roomId, "messages"), {
                             text: "",
                             fileUrl: base64AudioString,
-                            fileType: "voice", 
+                            fileType: "voice",
                             senderId: auth.currentUser.uid,
+                            receiverId: activeSelectedUserId,
+                            viewed: false,
                             timestamp: serverTimestamp()
                         });
+
                         await addDoc(collection(db, "global_unread_tracker"), { 
                             senderId: auth.currentUser.uid, 
                             receiverId: activeSelectedUserId, 
