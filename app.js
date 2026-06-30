@@ -280,7 +280,7 @@ function listenToAvailableUsersList() {
             const userData = userDoc.data();
             if (!auth.currentUser || userData.uid === auth.currentUser.uid) return; 
 
-            const initials = userData.email.substring(0, 2).toUpperCase();
+            const initials = "E&E";
             const unreadCount = cachedUnreadCounts[userData.uid] || 0;
 
             const bubbleItem = document.createElement('div');
@@ -321,7 +321,7 @@ function selectActiveTargetUserChat(targetUid, targetEmail) {
     userDisplayEmail.textContent = statusText;
 });
 
-    document.getElementById('active-user-avatar').textContent = targetEmail.substring(0,2).toUpperCase();
+    document.getElementById('active-user-avatar').textContent = "E&E";
     
     messageInput.disabled = false;
     sendBtn.disabled = false;
