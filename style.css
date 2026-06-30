@@ -808,6 +808,14 @@ margin-top:6px;
 }
 
 
+.chat-image{
+    max-width:300px;
+    max-height:300px;
+    border-radius:12px;
+    cursor:pointer;
+    display:block;
+}
+
 
 
 

@@ -387,13 +387,19 @@ function listenForActiveMessages() {
             let contentHTML = '';
 
             if (data.fileType === 'voice') {
-                contentHTML =
-                    `${data.fileUrl}</audio>`;
-            } 
+                contentHTML = `
+                <audio controls>
+                <source src="${data.fileUrl}" type="audio/webm">
+                </audio>`;
+            }
+
             else if (data.fileType === 'image') {
-                contentHTML =
-                    `${data.fileUrl}`;
-            } 
+                contentHTML = `<img
+                src="${data.fileUrl}"
+                class="chat-image"
+                alt="Image">`;
+            }
+
             else {
                 contentHTML =
                     `<span class="message-text">${escapeHTML(data.text || '')}</span>`;
