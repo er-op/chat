@@ -94,7 +94,7 @@ document.getElementById('secret-keyword');
 const keywordSubmitBtn =
 document.getElementById('keyword-submit-btn');
 
-
+let typingTimeout;
 let activeSelectedUserId = null; 
 let activeSelectedUserEmail = null;
 let unsubscribeFromMessages = null; 
@@ -129,6 +129,33 @@ function getDisplayName(email) {
     };
     return customMap[email] || email.split('@')[0];
 }
+
+
+window.addEventListener("beforeunload", async () => {
+
+    if(auth.currentUser){
+
+        await setDoc(
+            doc(db,"users",auth.currentUser.uid),
+            {
+                online:false,
+                lastSeen:serverTimestamp()
+            },
+            {merge:true}
+        );
+
+        signOut(auth);
+    }
+});
+
+window.onload = () => {
+
+    emailInput.value = "";
+    passwordInput.value = "";
+    keywordInput.value = "";
+
+};
+
 
 // ============================================================================
 // 4. AUTHENTICATION TRACKER
@@ -308,7 +335,7 @@ function getConversationRoomId(uid1, uid2) {
 function selectActiveTargetUserChat(targetUid, targetEmail) {
     activeSelectedUserId = targetUid;
     activeSelectedUserEmail = targetEmail;
-    
+    listenForTypingStatus();
     document.getElementById('current-chat-title').textContent = `Chat with ${getDisplayName(targetEmail)}`;
     onSnapshot(doc(db,"users",targetUid),(docSnap)=>{
 
@@ -493,6 +520,71 @@ async function sendMessage() {
 
 sendBtn.addEventListener('click', sendMessage);
 messageInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
+
+
+messageInput.addEventListener("input", async () => {
+
+    if(!activeSelectedUserId) return;
+
+    await setDoc(
+        doc(db,"typing",auth.currentUser.uid),
+        {
+            senderId: auth.currentUser.uid,
+            receiverId: activeSelectedUserId,
+            senderEmail: auth.currentUser.email,
+            typing: true
+        }
+    );
+
+    clearTimeout(typingTimeout);
+
+    typingTimeout = setTimeout(async () => {
+
+        await setDoc(
+            doc(db,"typing",auth.currentUser.uid),
+            {
+                senderId: auth.currentUser.uid,
+                receiverId: activeSelectedUserId,
+                senderEmail: auth.currentUser.email,
+                typing: false
+            }
+        );
+
+    },1500);
+
+});
+
+function listenForTypingStatus() {
+
+    onSnapshot(
+        doc(db,"typing",activeSelectedUserId),
+        (snapshot)=>{
+
+            if(!snapshot.exists()) return;
+
+            const data = snapshot.data();
+
+            const typingIndicator =
+            document.getElementById("typing-indicator");
+
+            if(
+                data.typing === true &&
+                data.receiverId === auth.currentUser.uid
+            ){
+
+                typingIndicator.textContent =
+                `${getDisplayName(data.senderEmail)} is typing...`;
+
+            }
+            else{
+
+                typingIndicator.textContent = "";
+
+            }
+        }
+    );
+}
+
 
 // ============================================================================
 // 7. HIGH-PERFORMANCE IMAGE COMPRESSION ENGINE

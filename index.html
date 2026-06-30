@@ -17,11 +17,24 @@
         <div class="auth-form">
             <div class="input-group">
                 <label for="email">Email Address</label>
-                <input type="email" id="email" placeholder="enter your email..." required>
+                <input
+                type="email"
+                id="email"
+                placeholder="enter your email..."
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+                required>
             </div>
             <div class="input-group">
                 <label for="password">Password</label>
-                <input type="password" id="password" placeholder="enter your password..." required>
+                <input
+                type="password"
+                id="password"
+                placeholder="enter your password..."
+                autocomplete="new-password"
+                required>
             </div>
             <div class="auth-buttons">
                 <button id="login-btn" class="btn btn-primary">Log In</button>
@@ -41,6 +54,7 @@
                 type="password"
                 id="secret-keyword"
                 placeholder="Enter keyword..."
+                autocomplete="off"
             ></div>
         </div>
 
@@ -69,6 +83,8 @@
                     <div>
                         <h3 id="current-chat-title">Select a person from the list to chat, bro!</h3>
                         <span id="user-display-email" class="status">Logged in as: ...</span>
+                        <div id="typing-indicator" class="typing-indicator"></div>
+
                     </div>
                 </div>
                 
