@@ -694,30 +694,53 @@ function escapeHTML(str) {
 // 10. REAL-TIME VOICE CALLING ENGINE - WEBRTC + FIRESTORE SIGNALING
 // ============================================================================
 
+
 const rtcConfig = {
     iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" }
-    ]
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" },
+        { urls: "stun:stun4.l.google.com:19302" }
+    ],
+    iceCandidatePoolSize: 10
 };
+
+
 
 
 function createPeerConnection(callId, isCaller) {
     peerConnection = new RTCPeerConnection(rtcConfig);
 
-    peerConnection.ontrack = (event) => {
+    peerConnection.ontrack = async (event) => {
         const remoteStream = event.streams[0];
+
+        console.log("Remote stream received:", remoteStream);
 
         if (currentCallType === "video") {
             remoteVideo.srcObject = remoteStream;
+
+            try {
+                await remoteVideo.play();
+            } catch (err) {
+                console.warn("Remote video autoplay blocked:", err);
+            }
         } else {
             remoteAudio.srcObject = remoteStream;
+
+            try {
+                await remoteAudio.play();
+            } catch (err) {
+                console.warn("Remote audio autoplay blocked:", err);
+            }
         }
     };
 
     peerConnection.onicecandidate = async (event) => {
         if (event.candidate) {
-            const candidateCollection = isCaller ? "offerCandidates" : "answerCandidates";
+            const candidateCollection = isCaller
+                ? "offerCandidates"
+                : "answerCandidates";
 
             await addDoc(
                 collection(db, "calls", callId, candidateCollection),
@@ -727,17 +750,38 @@ function createPeerConnection(callId, isCaller) {
     };
 
     peerConnection.onconnectionstatechange = () => {
+        console.log("Connection state:", peerConnection.connectionState);
+
+        if (peerConnection.connectionState === "connected") {
+            if (currentCallType === "video") {
+                videoCallText.textContent = "Video call connected";
+            } else {
+                activeCallText.textContent = "Voice call connected";
+            }
+        }
+
         if (
-            peerConnection.connectionState === "disconnected" ||
             peerConnection.connectionState === "failed" ||
             peerConnection.connectionState === "closed"
         ) {
+            cleanupVoiceCall();
+        }
+
+        // Do not immediately cleanup on "disconnected"
+        // It can recover automatically.
+    };
+
+    peerConnection.oniceconnectionstatechange = () => {
+        console.log("ICE state:", peerConnection.iceConnectionState);
+
+        if (peerConnection.iceConnectionState === "failed") {
             cleanupVoiceCall();
         }
     };
 
     return peerConnection;
 }
+
 
 
 async function clearOldCandidates(callId) {
@@ -763,7 +807,8 @@ async function startVoiceCall() {
 
     try {
         const roomId = getConversationRoomId(auth.currentUser.uid, activeSelectedUserId);
-        currentCallId = roomId;
+        currentCallId = `${roomId}_${Date.now()}`;
+
 
         await clearOldCandidates(currentCallId);
 
@@ -855,7 +900,8 @@ async function startVideoCall() {
         currentCallType = "video";
 
         const roomId = getConversationRoomId(auth.currentUser.uid, activeSelectedUserId);
-        currentCallId = roomId;
+        currentCallId = `${roomId}_${Date.now()}`;
+
 
         await clearOldCandidates(currentCallId);
 
