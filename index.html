@@ -74,6 +74,7 @@
                 
                 <div class="header-actions">
                     <button id="voice-call-btn" class="btn-call" disabled>📞 Call</button>
+                    <button id="video-call-btn" class="btn-call" disabled>🎥 Video</button>
                     <button id="clear-chat-btn" class="btn-clear" style="display: none;">Clear Chat</button>
                     <button id="logout-btn" class="btn-logout">Logout</button>
                 </div>
@@ -122,6 +123,19 @@
         <span id="active-call-text">Voice call active</span>
         <button id="end-call-btn">End Call</button>
     </div>
+
+    <div id="video-call-container" class="video-call-container" style="display:none;">
+        <div class="video-box">
+            <video id="remote-video" autoplay playsinline></video>
+            <video id="local-video" autoplay muted playsinline></video>
+            <div class="video-call-actions">
+                <span id="video-call-text">Video call active</span>
+                <button id="end-video-call-btn">End Video</button>
+            </div>
+        </div>
+    </div>
+
+
     <audio id="remote-audio" autoplay></audio>
 
     <script type="module" src="app.js"></script>

@@ -77,6 +77,14 @@ const endCallBtn = document.getElementById('end-call-btn');
 const remoteAudio = document.getElementById('remote-audio');
 
 
+const videoCallBtn = document.getElementById('video-call-btn');
+const videoCallContainer = document.getElementById('video-call-container');
+const localVideo = document.getElementById('local-video');
+const remoteVideo = document.getElementById('remote-video');
+const videoCallText = document.getElementById('video-call-text');
+const endVideoCallBtn = document.getElementById('end-video-call-btn');
+
+
 const keywordContainer =
 document.getElementById('keyword-container');
 
@@ -104,7 +112,7 @@ let unsubscribeCallStatus = null;
 let unsubscribeAnswer = null;
 let unsubscribeRemoteCandidates = null;
 
-
+let currentCallType = "audio";
 
 // Voice Recording Hardware State Trackers
 let mediaRecorder = null;
@@ -319,6 +327,7 @@ function selectActiveTargetUserChat(targetUid, targetEmail) {
     sendBtn.disabled = false;
     voiceBtn.disabled = false; 
     voiceCallBtn.disabled = false;
+    videoCallBtn.disabled = false;
     clearChatBtn.style.display = 'block'; 
 
     cachedUnreadCounts[targetUid] = 0;
@@ -692,11 +701,18 @@ const rtcConfig = {
     ]
 };
 
+
 function createPeerConnection(callId, isCaller) {
     peerConnection = new RTCPeerConnection(rtcConfig);
 
     peerConnection.ontrack = (event) => {
-        remoteAudio.srcObject = event.streams[0];
+        const remoteStream = event.streams[0];
+
+        if (currentCallType === "video") {
+            remoteVideo.srcObject = remoteStream;
+        } else {
+            remoteAudio.srcObject = remoteStream;
+        }
     };
 
     peerConnection.onicecandidate = async (event) => {
@@ -723,6 +739,7 @@ function createPeerConnection(callId, isCaller) {
     return peerConnection;
 }
 
+
 async function clearOldCandidates(callId) {
     const offerCandidates = await getDocs(collection(db, "calls", callId, "offerCandidates"));
     const answerCandidates = await getDocs(collection(db, "calls", callId, "answerCandidates"));
@@ -741,6 +758,7 @@ async function clearOldCandidates(callId) {
 }
 
 async function startVoiceCall() {
+    currentCallType = "audio";
     if (!activeSelectedUserId || !auth.currentUser) return;
 
     try {
@@ -776,6 +794,7 @@ async function startVoiceCall() {
             offer: offer,
             answer: null,
             status: "ringing",
+            callType: "audio",
             createdAt: serverTimestamp()
         });
 
@@ -829,6 +848,104 @@ async function startVoiceCall() {
     }
 }
 
+async function startVideoCall() {
+    if (!activeSelectedUserId || !auth.currentUser) return;
+
+    try {
+        currentCallType = "video";
+
+        const roomId = getConversationRoomId(auth.currentUser.uid, activeSelectedUserId);
+        currentCallId = roomId;
+
+        await clearOldCandidates(currentCallId);
+
+        localStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: true
+        });
+
+        localVideo.srcObject = localStream;
+
+        createPeerConnection(currentCallId, true);
+
+        localStream.getTracks().forEach((track) => {
+            peerConnection.addTrack(track, localStream);
+        });
+
+        const offerDescription = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offerDescription);
+
+        const offer = {
+            type: offerDescription.type,
+            sdp: offerDescription.sdp
+        };
+
+        await setDoc(doc(db, "calls", currentCallId), {
+            callerId: auth.currentUser.uid,
+            callerEmail: auth.currentUser.email,
+            receiverId: activeSelectedUserId,
+            receiverEmail: activeSelectedUserEmail,
+            offer: offer,
+            answer: null,
+            status: "ringing",
+            callType: "video",
+            createdAt: serverTimestamp()
+        });
+
+        videoCallText.textContent =
+            `Calling ${getDisplayName(activeSelectedUserEmail)}...`;
+
+        videoCallContainer.style.display = "flex";
+
+        unsubscribeAnswer = onSnapshot(doc(db, "calls", currentCallId), async (snapshot) => {
+            const data = snapshot.data();
+
+            if (!data) return;
+
+            if (data.status === "rejected" || data.status === "ended") {
+                cleanupVoiceCall();
+                return;
+            }
+
+            if (data.answer && peerConnection && !peerConnection.currentRemoteDescription) {
+                const answerDescription = new RTCSessionDescription(data.answer);
+                await peerConnection.setRemoteDescription(answerDescription);
+
+                videoCallText.textContent =
+                    `On video call with ${getDisplayName(activeSelectedUserEmail)}`;
+            }
+        });
+
+        unsubscribeRemoteCandidates = onSnapshot(
+            collection(db, "calls", currentCallId, "answerCandidates"),
+            (snapshot) => {
+                snapshot.docChanges().forEach((change) => {
+                    if (change.type === "added") {
+                        const candidate = new RTCIceCandidate(change.doc.data());
+                        peerConnection.addIceCandidate(candidate).catch(console.error);
+                    }
+                });
+            }
+        );
+
+        unsubscribeCallStatus = onSnapshot(doc(db, "calls", currentCallId), (snapshot) => {
+            const data = snapshot.data();
+
+            if (!data) return;
+
+            if (data.status === "ended" || data.status === "rejected") {
+                cleanupVoiceCall();
+            }
+        });
+
+    } catch (error) {
+        console.error(error);
+        alert("Unable to start video call. Please allow camera and microphone permission, bro.");
+        cleanupVoiceCall();
+    }
+}
+
+
 function listenForIncomingVoiceCalls() {
     if (unsubscribeIncomingCalls) unsubscribeIncomingCalls();
 
@@ -848,12 +965,15 @@ function listenForIncomingVoiceCalls() {
                     data: callData
                 };
 
-                incomingCallText.textContent = `${getDisplayName(callData.callerEmail)} is calling you...`;
+                const callLabel = callData.callType === "video" ? "video calling" : "calling";
+                incomingCallText.textContent =    `${getDisplayName(callData.callerEmail)} is ${callLabel} you...`;
+
                 incomingCallPopup.style.display = "flex";
             }
         });
     });
 }
+
 
 async function acceptVoiceCall() {
     if (!currentIncomingCall || !auth.currentUser) return;
@@ -862,12 +982,21 @@ async function acceptVoiceCall() {
         currentCallId = currentIncomingCall.id;
         const callData = currentIncomingCall.data;
 
+        currentCallType = callData.callType || "audio";
+
         incomingCallPopup.style.display = "none";
 
         localStream = await navigator.mediaDevices.getUserMedia({
             audio: true,
-            video: false
+            video: currentCallType === "video"
         });
+
+        if (currentCallType === "video") {
+            localVideo.srcObject = localStream;
+            videoCallContainer.style.display = "flex";
+            videoCallText.textContent =
+                `On video call with ${getDisplayName(callData.callerEmail)}`;
+        }
 
         createPeerConnection(currentCallId, false);
 
@@ -888,7 +1017,9 @@ async function acceptVoiceCall() {
         );
 
         const offerDescription = callData.offer;
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(offerDescription));
+        await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(offerDescription)
+        );
 
         const answerDescription = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answerDescription);
@@ -903,8 +1034,12 @@ async function acceptVoiceCall() {
             status: "accepted"
         });
 
-        activeCallText.textContent = `On call with ${getDisplayName(callData.callerEmail)}`;
-        activeCallBar.style.display = "flex";
+        if (currentCallType === "audio") {
+            activeCallText.textContent =
+                `On call with ${getDisplayName(callData.callerEmail)}`;
+
+            activeCallBar.style.display = "flex";
+        }
 
         unsubscribeCallStatus = onSnapshot(doc(db, "calls", currentCallId), (snapshot) => {
             const data = snapshot.data();
@@ -918,10 +1053,11 @@ async function acceptVoiceCall() {
 
     } catch (error) {
         console.error(error);
-        alert("Unable to accept voice call. Please allow microphone permission, bro.");
+        alert("Unable to accept call. Please allow camera/microphone permission, bro.");
         cleanupVoiceCall();
     }
 }
+
 
 async function rejectVoiceCall() {
     if (!currentIncomingCall) return;
@@ -972,6 +1108,12 @@ function cleanupVoiceCall() {
 
     remoteAudio.srcObject = null;
 
+    localVideo.srcObject = null;
+    remoteVideo.srcObject = null;
+    videoCallContainer.style.display = "none";
+    currentCallType = "audio";
+
+
     activeCallBar.style.display = "none";
     incomingCallPopup.style.display = "none";
 
@@ -979,7 +1121,12 @@ function cleanupVoiceCall() {
     currentIncomingCall = null;
 }
 
+
 voiceCallBtn.addEventListener("click", startVoiceCall);
+videoCallBtn.addEventListener("click", startVideoCall);
+
 acceptCallBtn.addEventListener("click", acceptVoiceCall);
 rejectCallBtn.addEventListener("click", rejectVoiceCall);
+
 endCallBtn.addEventListener("click", endVoiceCall);
+endVideoCallBtn.addEventListener("click", endVoiceCall);
