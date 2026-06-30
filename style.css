@@ -1515,3 +1515,58 @@ font-size:14px;
     }
 }
 
+
+/* ===== MOBILE HEADER FIX ===== */
+
+@media(max-width:800px){
+
+    .chat-header{
+        height:auto !important;
+        padding:8px;
+        flex-direction:column;
+        align-items:stretch;
+        gap:8px;
+    }
+
+    .user-info{
+        width:100%;
+        gap:10px;
+    }
+
+    #current-chat-title{
+        font-size:15px;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+    }
+
+    .status{
+        font-size:11px;
+    }
+
+    .header-actions{
+        width:100%;
+        display:flex;
+        gap:6px;
+    }
+
+    .btn-call,
+    .btn-clear,
+    .btn-logout{
+        flex:1;
+        padding:8px 4px;
+        font-size:12px;
+        border-radius:12px;
+    }
+}
+
+@media(max-width:450px){
+
+    .btn-call,
+    .btn-clear,
+    .btn-logout{
+        padding:6px 2px;
+        font-size:11px;
+    }
+
+}
