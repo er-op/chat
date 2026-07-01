@@ -17,6 +17,7 @@ import {
     query, 
     orderBy, 
     where,
+    limit,
     onSnapshot, 
     serverTimestamp,
     doc,
@@ -31,13 +32,13 @@ import {
 // 2. YOUR FIREBASE CONFIGURATION
 // ============================================================================
 const firebaseConfig = {
-  apiKey: "AIzaSyB1uzmDbEQMFHvD8J9EkUDyj5Hnc36ImG4",
-  authDomain: "chatapplication-6bee4.firebaseapp.com",
-  projectId: "chatapplication-6bee4",
-  storageBucket: "chatapplication-6bee4.firebasestorage.app",
-  messagingSenderId: "111107631523",
-  appId: "1:111107631523:web:156caaefc8e3a18a765216",
-  measurementId: "G-60EH4K3X4Z"
+  apiKey: "AIzaSyB-cfEKiKd4eSqNpV0aq80bRPuTfSk1K4Q",
+  authDomain: "chatapplication2-a370f.firebaseapp.com",
+  projectId: "chatapplication2-a370f",
+  storageBucket: "chatapplication2-a370f.firebasestorage.app",
+  messagingSenderId: "536180252171",
+  appId: "1:536180252171:web:2196e5cfdc2a5997f1710e",
+  measurementId: "G-M0962GCCEJ"
 };
 
 // Initialize Firebase Services
@@ -94,13 +95,22 @@ document.getElementById('secret-keyword');
 const keywordSubmitBtn =
 document.getElementById('keyword-submit-btn');
 
-let typingTimeout;
+
+let typingTimeout = null;
+let typingWriteDelay = null;
+
 let activeSelectedUserId = null; 
 let activeSelectedUserEmail = null;
+
 let unsubscribeFromMessages = null; 
 let unsubscribeFromUsers = null;
 let unsubscribeFromUnread = null;
-let cachedUnreadCounts = {}; 
+let unsubscribeTyping = null;
+let unsubscribeUserStatus = null;
+
+let cachedUnreadCounts = {};
+let cachedUsersSnapshot = null;
+
 
 
 let peerConnection = null;
@@ -179,20 +189,39 @@ onAuthStateChanged(auth, async (user) => {
         passwordInput.value = '';
         
         listenToAvailableUsersList(); 
-        listenForGlobalUnreadBadges();
-        listenForIncomingVoiceCalls();
+        //listenForGlobalUnreadBadges();
+        //listenForIncomingVoiceCalls();
     } else {
         authContainer.style.display = 'block';
         chatContainer.style.display = 'none';
         chatWindow.innerHTML = '<div class="system-message">Select an active friend bubble from the left side to load history, bro!</div>'; 
         clearChatBtn.style.display = 'none'; 
-        
-        if (unsubscribeFromMessages) unsubscribeFromMessages();
-        if (unsubscribeFromUsers) unsubscribeFromUsers();
-        if (unsubscribeFromUnread) unsubscribeFromUnread();
-
-        if (unsubscribeIncomingCalls) unsubscribeIncomingCalls();
+        if (unsubscribeFromMessages) {
+            unsubscribeFromMessages();
+            unsubscribeFromMessages = null;
+        }
+        if (unsubscribeFromUsers) {
+            unsubscribeFromUsers();
+            unsubscribeFromUsers = null;
+        }
+        if (unsubscribeFromUnread) {
+            unsubscribeFromUnread();
+            unsubscribeFromUnread = null;
+        }
+        if (unsubscribeTyping) {
+            unsubscribeTyping();
+            unsubscribeTyping = null;
+        }
+        if (unsubscribeUserStatus) {
+            unsubscribeUserStatus();
+            unsubscribeUserStatus = null;
+        }
+        if (unsubscribeIncomingCalls) {
+            unsubscribeIncomingCalls();
+            unsubscribeIncomingCalls = null;
+        }
         cleanupVoiceCall();
+
 
         
         activeSelectedUserId = null;
@@ -298,69 +327,110 @@ keywordInput.addEventListener('keypress',(e)=>{
 // 6. REAL-TIME MESSAGING ENGINE & SIDEBAR GENERATION
 // ============================================================================
 
-function listenToAvailableUsersList() {
-    if (unsubscribeFromUsers) unsubscribeFromUsers();
 
-    unsubscribeFromUsers = onSnapshot(collection(db, "users"), (snapshot) => {
-        usersListContainer.innerHTML = '';
-        snapshot.forEach((userDoc) => {
-            const userData = userDoc.data();
-            if (!auth.currentUser || userData.uid === auth.currentUser.uid) return; 
+function renderUsersList() {
+    if (!cachedUsersSnapshot || !auth.currentUser) return;
 
-            const initials = "E&E";
-            const unreadCount = cachedUnreadCounts[userData.uid] || 0;
+    usersListContainer.innerHTML = '';
 
-            const bubbleItem = document.createElement('div');
-            bubbleItem.className = `user-bubble-item ${activeSelectedUserId === userData.uid ? 'active' : ''}`;
-            bubbleItem.innerHTML = `
-                <div class="bubble-avatar">${initials}</div>
-                <div class="bubble-info">
-                    <span class="bubble-name">${getDisplayName(userData.email)}</span>
-                    <span class="bubble-status">${userData.online ? '🟢 Online' : '⚫ Offline'}</span>
+    cachedUsersSnapshot.forEach((userDoc) => {
+        const userData = userDoc.data();
 
-                </div>
-                ${unreadCount > 0 ? `<div class="unread-badge">${unreadCount}</div>` : ''}
-            `;
+        if (!userData || !userData.uid) return;
+        if (userData.uid === auth.currentUser.uid) return;
 
-            bubbleItem.addEventListener('click', () => selectActiveTargetUserChat(userData.uid, userData.email));
-            usersListContainer.appendChild(bubbleItem);
+        const initials = "E&E";
+        const unreadCount = cachedUnreadCounts[userData.uid] || 0;
+
+        const bubbleItem = document.createElement('div');
+        bubbleItem.className = `user-bubble-item ${activeSelectedUserId === userData.uid ? 'active' : ''}`;
+
+        bubbleItem.innerHTML = `
+            <div class="bubble-avatar">${initials}</div>
+            <div class="bubble-info">
+                <span class="bubble-name">${getDisplayName(userData.email || "Unknown")}</span>
+                <span class="bubble-status">${userData.online ? '🟢 Online' : '⚫ Offline'}</span>
+            </div>
+            ${unreadCount > 0 ? `<div class="unread-badge">${unreadCount}</div>` : ''}
+        `;
+
+        bubbleItem.addEventListener('click', () => {
+            selectActiveTargetUserChat(userData.uid, userData.email);
         });
+
+        usersListContainer.appendChild(bubbleItem);
     });
 }
+
+function listenToAvailableUsersList() {
+    if (unsubscribeFromUsers) {
+        unsubscribeFromUsers();
+        unsubscribeFromUsers = null;
+    }
+
+    unsubscribeFromUsers = onSnapshot(
+        collection(db, "users"),
+        (snapshot) => {
+            cachedUsersSnapshot = snapshot;
+            renderUsersList();
+        },
+        (error) => {
+            console.error("Users listener error:", error);
+        }
+    );
+}
+
 
 function getConversationRoomId(uid1, uid2) {
     return uid1 < uid2 ? `${uid1}_${uid2}` : `${uid2}_${uid1}`;
 }
 
+
 function selectActiveTargetUserChat(targetUid, targetEmail) {
     activeSelectedUserId = targetUid;
     activeSelectedUserEmail = targetEmail;
+
     listenForTypingStatus();
-    document.getElementById('current-chat-title').textContent = `Chat with ${getDisplayName(targetEmail)}`;
-    onSnapshot(doc(db,"users",targetUid),(docSnap)=>{
 
-    const data=docSnap.data();
+    document.getElementById('current-chat-title').textContent =
+        `Chat with ${getDisplayName(targetEmail)}`;
 
-    const statusText = data.online
-    ? "🟢 Online"
-    : "⚫ Offline";
+    if (unsubscribeUserStatus) {
+        unsubscribeUserStatus();
+        unsubscribeUserStatus = null;
+    }
 
-    userDisplayEmail.textContent = statusText;
-});
+    unsubscribeUserStatus = onSnapshot(
+        doc(db, "users", targetUid),
+        (docSnap) => {
+            if (!docSnap.exists()) return;
+
+            const data = docSnap.data();
+
+            userDisplayEmail.textContent = data.online
+                ? "🟢 Online"
+                : "⚫ Offline";
+        },
+        (error) => {
+            console.error("User status listener error:", error);
+        }
+    );
 
     document.getElementById('active-user-avatar').textContent = "E&E";
-    
+
     messageInput.disabled = false;
     sendBtn.disabled = false;
-    voiceBtn.disabled = false; 
+    voiceBtn.disabled = false;
     voiceCallBtn.disabled = false;
     videoCallBtn.disabled = false;
-    clearChatBtn.style.display = 'block'; 
+    clearChatBtn.style.display = 'block';
 
     cachedUnreadCounts[targetUid] = 0;
-    listenToAvailableUsersList();
+
+    renderUsersList();
     listenForActiveMessages();
 }
+
 
 
 function listenForActiveMessages() {
@@ -369,8 +439,10 @@ function listenForActiveMessages() {
     const roomId = getConversationRoomId(auth.currentUser.uid, activeSelectedUserId);
     const messagesQuery = query(
         collection(db, "rooms", roomId, "messages"),
-        orderBy("timestamp", "asc")
+        orderBy("timestamp", "asc"),
+        limit(100)
     );
+
 
     unsubscribeFromMessages = onSnapshot(messagesQuery, async (snapshot) => {
         chatWindow.innerHTML = '';
@@ -460,23 +532,53 @@ function listenForActiveMessages() {
 }
 
 
-function listenForGlobalUnreadBadges() {
-    if (unsubscribeFromUnread) unsubscribeFromUnread();
 
-    unsubscribeFromUnread = onSnapshot(collection(db, "global_unread_tracker"), (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-            if (change.type === "added") {
+function listenForGlobalUnreadBadges() {
+    if (unsubscribeFromUnread) {
+        unsubscribeFromUnread();
+        unsubscribeFromUnread = null;
+    }
+
+    if (!auth.currentUser) return;
+
+    const unreadQuery = query(
+        collection(db, "global_unread_tracker"),
+        where("receiverId", "==", auth.currentUser.uid),
+        limit(50)
+    );
+
+    unsubscribeFromUnread = onSnapshot(
+        unreadQuery,
+        (snapshot) => {
+            snapshot.docChanges().forEach((change) => {
                 const data = change.doc.data();
-                if (auth.currentUser && data.receiverId === auth.currentUser.uid && data.senderId !== activeSelectedUserId) {
-                    cachedUnreadCounts[data.senderId] = (cachedUnreadCounts[data.senderId] || 0) + 1;
+
+                if (!data || !data.senderId) return;
+
+                if (change.type === "added") {
+                    if (data.senderId !== activeSelectedUserId) {
+                        cachedUnreadCounts[data.senderId] =
+                            (cachedUnreadCounts[data.senderId] || 0) + 1;
+                    } else {
+                        deleteDoc(
+                            doc(db, "global_unread_tracker", change.doc.id)
+                        ).catch(console.error);
+                    }
                 }
-                if (auth.currentUser && data.receiverId === auth.currentUser.uid && data.senderId === activeSelectedUserId) {
-                    deleteDoc(doc(db, "global_unread_tracker", change.doc.id)).catch(() => {});
+
+                if (change.type === "removed") {
+                    if (cachedUnreadCounts[data.senderId] > 0) {
+                        cachedUnreadCounts[data.senderId]--;
+                    }
                 }
-            }
-        });
-        listenToAvailableUsersList();
-    });
+            });
+
+            renderUsersList();
+        },
+        (error) => {
+            console.error("Unread listener error:", error);
+        }
+    );
 }
 
 
@@ -522,68 +624,80 @@ sendBtn.addEventListener('click', sendMessage);
 messageInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
 
 
-messageInput.addEventListener("input", async () => {
 
-    if(!activeSelectedUserId) return;
+messageInput.addEventListener("input", () => {
+    if (!activeSelectedUserId || !auth.currentUser) return;
 
-    await setDoc(
-        doc(db,"typing",auth.currentUser.uid),
-        {
-            senderId: auth.currentUser.uid,
-            receiverId: activeSelectedUserId,
-            senderEmail: auth.currentUser.email,
-            typing: true
-        }
-    );
+    clearTimeout(typingWriteDelay);
+
+    typingWriteDelay = setTimeout(() => {
+        setDoc(
+            doc(db, "typing", auth.currentUser.uid),
+            {
+                senderId: auth.currentUser.uid,
+                receiverId: activeSelectedUserId,
+                senderEmail: auth.currentUser.email,
+                typing: true
+            },
+            { merge: true }
+        ).catch(console.error);
+    }, 500);
 
     clearTimeout(typingTimeout);
 
-    typingTimeout = setTimeout(async () => {
-
-        await setDoc(
-            doc(db,"typing",auth.currentUser.uid),
+    typingTimeout = setTimeout(() => {
+        setDoc(
+            doc(db, "typing", auth.currentUser.uid),
             {
                 senderId: auth.currentUser.uid,
                 receiverId: activeSelectedUserId,
                 senderEmail: auth.currentUser.email,
                 typing: false
-            }
-        );
-
-    },1500);
-
+            },
+            { merge: true }
+        ).catch(console.error);
+    }, 1500);
 });
 
+
+
 function listenForTypingStatus() {
+    if (unsubscribeTyping) {
+        unsubscribeTyping();
+        unsubscribeTyping = null;
+    }
 
-    onSnapshot(
-        doc(db,"typing",activeSelectedUserId),
-        (snapshot)=>{
+    if (!activeSelectedUserId) return;
 
-            if(!snapshot.exists()) return;
+    unsubscribeTyping = onSnapshot(
+        doc(db, "typing", activeSelectedUserId),
+        (snapshot) => {
+            const typingIndicator =
+                document.getElementById("typing-indicator");
+
+            if (!snapshot.exists()) {
+                typingIndicator.textContent = "";
+                return;
+            }
 
             const data = snapshot.data();
 
-            const typingIndicator =
-            document.getElementById("typing-indicator");
-
-            if(
+            if (
                 data.typing === true &&
                 data.receiverId === auth.currentUser.uid
-            ){
-
+            ) {
                 typingIndicator.textContent =
-                `${getDisplayName(data.senderEmail)} is typing...`;
-
-            }
-            else{
-
+                    `${getDisplayName(data.senderEmail)} is typing...`;
+            } else {
                 typingIndicator.textContent = "";
-
             }
+        },
+        (error) => {
+            console.error("Typing listener error:", error);
         }
     );
 }
+
 
 
 // ============================================================================
